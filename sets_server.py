@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import shutil
 import threading
 from pathlib import Path
 from typing import Any
@@ -37,9 +38,20 @@ state_lock = threading.Lock()
 def get_runtime() -> tuple[Settings, StateStore]:
     global settings, state_store
     if settings is None or state_store is None:
+        ensure_config_file()
         settings = load_settings(CONFIG_FILE)
         state_store = StateStore(settings.state_file)
     return settings, state_store
+
+
+def ensure_config_file() -> None:
+    if CONFIG_FILE.exists():
+        return
+    example_file = PROJECT_DIR / "config.example.json"
+    if not example_file.exists():
+        raise RuntimeError(f"Configuration template was not found: {example_file}")
+    shutil.copyfile(example_file, CONFIG_FILE)
+    print(f"Created configuration file from template: {CONFIG_FILE}")
 
 
 def credentials_from_form(form: Any) -> Credentials:
