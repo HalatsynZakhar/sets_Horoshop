@@ -68,6 +68,14 @@ class HoroshopSetsTests(unittest.TestCase):
         self.assertTrue(plan[0].ready)
         self.assertEqual(plan[0].products, ("REAL-A", "REAL-B"))
 
+    def test_catalog_index_accepts_raw_api_export(self) -> None:
+        catalog = CatalogIndex.from_raw(
+            [{"article": "REAL-A", "article_for_display": "DISPLAY-A"}]
+        )
+        article, error = catalog.resolve_display_article("DISPLAY-A")
+        self.assertEqual(article, "REAL-A")
+        self.assertEqual(error, "")
+
     def test_ambiguous_display_article_and_product_article_collision_are_blocked(self) -> None:
         catalog = CatalogIndex.from_raw(
             [

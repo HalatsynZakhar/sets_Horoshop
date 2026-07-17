@@ -97,7 +97,7 @@ def create_plan(contents: bytes, credentials: Credentials) -> tuple[list[PlanIte
     runtime_settings, _ = get_runtime()
     rows = parse_excel_sets(contents)
     client = HoroshopClient(runtime_settings, credentials)
-    catalog = CatalogIndex(client.export_catalog())
+    catalog = CatalogIndex.from_raw(client.export_catalog())
     return prepare_plan(rows, catalog), client
 
 
