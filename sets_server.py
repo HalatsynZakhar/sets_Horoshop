@@ -149,7 +149,7 @@ def import_excel(contents: bytes, credentials: Credentials) -> dict[str, Any]:
     known_delete_items = [item for item in delete_items if store.contains(item.article)]
     for item in delete_items:
         if not store.contains(item.article):
-            results[item.article] = (False, "Удаление запрещено: набора нет в локальном реестре.")
+            results[item.article] = (False, "Видалення заборонено: набору немає в локальному реєстрі.")
     for start in range(0, len(known_delete_items), runtime_settings.batch_size):
         batch = known_delete_items[start : start + runtime_settings.batch_size]
         results.update(remove_results(client.remove_sets([item.article for item in batch])))
@@ -161,7 +161,7 @@ def import_excel(contents: bytes, credentials: Credentials) -> dict[str, Any]:
                 continue
             success, message = results.get(
                 item.article,
-                (False, "API не вернуло результат для этого набора."),
+                (False, "API не повернуло результат для цього набору."),
             )
             if item.action == "delete":
                 store.record_deletion(item.article, "deleted" if success else "delete_error", message)
@@ -182,7 +182,7 @@ def import_excel(contents: bytes, credentials: Credentials) -> dict[str, Any]:
         else:
             success, message = results.get(
                 item.article,
-                (False, "API не вернуло результат для этого набора."),
+                (False, "API не повернуло результат для цього набору."),
             )
             response_item["status"] = (
                 "deleted" if success and item.action == "delete"
@@ -205,7 +205,7 @@ def credentials_from_json(data: dict[str, Any]) -> Credentials:
     password = normalize(data.get("password"))
     token = normalize(data.get("token"))
     if not token and (not login or not password):
-        raise HoroshopSetsError("Укажите логин и пароль API или действующий токен.")
+        raise HoroshopSetsError("Вкажіть логін і пароль API або чинний токен.")
     return Credentials(login=login, password=password, token=token)
 
 
@@ -215,7 +215,7 @@ def editor_plan(data: dict[str, Any], credentials: Credentials) -> tuple[PlanIte
     with state_lock:
         existing = dict(store.get(article) or {})
     if not existing:
-        raise HoroshopSetsError("Редактировать можно только набор из локального реестра.")
+        raise HoroshopSetsError("Редагувати можна лише набір з локального реєстру.")
 
     supplied_display_articles = data.get("display_articles")
     if isinstance(supplied_display_articles, list):
@@ -225,7 +225,7 @@ def editor_plan(data: dict[str, Any], credentials: Credentials) -> tuple[PlanIte
     else:
         display_articles = split_display_articles(supplied_display_articles)
     if len(display_articles) < 2:
-        raise HoroshopSetsError("В наборе должно быть не менее двух товаров.")
+        raise HoroshopSetsError("У наборі має бути щонайменше два товари.")
 
     price = parse_price(data.get("discounted_price", existing.get("discounted_price", "")))
     title = normalize(data.get("title", existing.get("title", runtime_settings.title)))
@@ -243,7 +243,7 @@ def editor_plan(data: dict[str, Any], credentials: Credentials) -> tuple[PlanIte
     )
     currency = normalize(data.get("currency", existing.get("currency", runtime_settings.currency))).upper()
     if len(currency) != 3:
-        raise HoroshopSetsError("Валюта должна состоять из трех букв.")
+        raise HoroshopSetsError("Валюта має складатися з трьох літер.")
 
     client = HoroshopClient(runtime_settings, credentials)
     row = SetRow(
@@ -269,7 +269,7 @@ def update_tracked_set(data: dict[str, Any]) -> dict[str, Any]:
     item, client = editor_plan(data, credentials)
     result = import_results(client.import_sets(import_payload([item], runtime_settings))).get(
         item.article,
-        (False, "API не вернуло результат для этого набора."),
+        (False, "API не повернуло результат для цього набору."),
     )
     with state_lock:
         store.record(item, "synced" if result[0] else "error", result[1])
@@ -281,15 +281,15 @@ def delete_tracked_sets(data: dict[str, Any]) -> dict[str, Any]:
     credentials = credentials_from_json(data)
     raw_articles = data.get("articles")
     if not isinstance(raw_articles, list):
-        raise HoroshopSetsError("Передайте список артикулов наборов для удаления.")
+        raise HoroshopSetsError("Передайте список артикулів наборів для видалення.")
     articles = list(dict.fromkeys(normalize(article) for article in raw_articles if normalize(article)))
     if not articles:
-        raise HoroshopSetsError("Выберите хотя бы один набор.")
+        raise HoroshopSetsError("Виберіть хоча б один набір.")
     runtime_settings, store = get_runtime()
     with state_lock:
         known = [article for article in articles if store.contains(article)]
     results: dict[str, tuple[bool, str]] = {
-        article: (False, "Удаление запрещено: набора нет в локальном реестре.")
+        article: (False, "Видалення заборонено: набору немає в локальному реєстрі.")
         for article in articles if article not in known
     }
     client = HoroshopClient(runtime_settings, credentials)
@@ -298,7 +298,7 @@ def delete_tracked_sets(data: dict[str, Any]) -> dict[str, Any]:
         results.update(remove_results(response))
     with state_lock:
         for article in articles:
-            success, message = results.get(article, (False, "API не вернуло результат для этого набора."))
+            success, message = results.get(article, (False, "API не повернуло результат для цього набору."))
             if store.contains(article):
                 store.record_deletion(article, "deleted" if success else "delete_error", message)
         store.save()
@@ -311,6 +311,8 @@ def delete_tracked_sets(data: dict[str, Any]) -> dict[str, Any]:
 
 
 def page_html() -> str:
+    return page_html_uk()
+
     return """<!doctype html>
 <html lang="ru">
 <head>
@@ -492,6 +494,62 @@ def page_html() -> str:
 </body></html>"""
 
 
+def page_html_uk() -> str:
+    return """<!doctype html>
+<html lang="uk">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Набори Хорошоп</title>
+  <style>
+    :root { font-family:Arial,sans-serif; color:#183126; background:#f3f6f4; } * { box-sizing:border-box; } body { margin:0; }
+    header { background:#135c3c; color:#fff; padding:22px max(20px,calc((100% - 1180px)/2)); } h1 { margin:0; font-size:26px; } header p { margin:6px 0 0; color:#dcefe4; }
+    main { max-width:1180px; margin:auto; padding:20px; } section { background:#fff; border:1px solid #d5e1d9; border-radius:6px; padding:18px; margin-bottom:16px; } h2 { margin:0 0 14px; font-size:18px; }
+    .grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; } .grid.two { grid-template-columns:repeat(2,minmax(0,1fr)); }
+    label { display:grid; gap:6px; font-size:13px; font-weight:700; } input,select { min-height:38px; width:100%; border:1px solid #adc1b3; border-radius:4px; padding:8px; font:inherit; } input.input-error { border-color:#b42332; background:#fff1f2; outline:2px solid #f8c6cc; }
+    .actions { display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin-top:14px; } button,.link-button { border:1px solid #135c3c; border-radius:4px; padding:9px 13px; font:inherit; font-weight:700; background:#135c3c; color:#fff; cursor:pointer; text-decoration:none; } button.secondary,.link-button.secondary { background:#f1f6f2; color:#15482e; border-color:#b8cabb; } button.danger { background:#a52834; border-color:#a52834; }
+    .note { margin:12px 0 0; padding:10px 12px; border-left:4px solid #d09120; background:#fff8e7; color:#5b481a; line-height:1.45; } .hint { color:#4f6456; line-height:1.45; } .table-wrap { overflow-x:auto; }
+    table { min-width:980px; width:100%; border-collapse:collapse; font-size:13px; } th,td { padding:9px; text-align:left; vertical-align:top; border-bottom:1px solid #e0e9e3; } th { color:#4b6355; font-size:11px; text-transform:uppercase; }
+    .price-cell { display:flex; min-width:135px; gap:5px; } .price-cell input { min-height:32px; min-width:75px; padding:5px; } .price-cell button { padding:5px 8px; } .tag { display:inline-block; border-radius:3px; padding:3px 6px; font-size:11px; font-weight:700; background:#e8eef0; color:#354b55; } .tag.synced,.tag.registered { background:#dff3e7; color:#0c5532; } .tag.error,.tag.delete_error { background:#fae4e6; color:#8d1826; }
+    .empty { color:#6b7b70; } #editor { display:none; } #editor.visible { display:block; } #activity-log { display:grid; gap:7px; max-height:260px; overflow:auto; } .log-entry { padding:9px 10px; border-left:4px solid #7b8c81; background:#f5f8f6; line-height:1.4; } .log-entry.ok { border-color:#177245; background:#eaf7ee; } .log-entry.error { border-color:#b42332; background:#fff0f1; }
+    @media(max-width:720px) { main { padding:14px; } section { padding:14px; } .grid,.grid.two { grid-template-columns:1fr; } }
+  </style>
+</head>
+<body>
+  <header><h1>Набори Хорошоп</h1><p>Створення та керування наборами товарів.</p></header>
+  <main>
+    <section><h2>Доступ до API</h2><div class="grid"><label>Логін API<input id="login" autocomplete="username"></label><label>Пароль API<input id="password" type="password" autocomplete="current-password"></label><label>Токен API<input id="token"><span class="hint">Можна вказати замість логіна та пароля.</span></label></div></section>
+    <section><h2>Масове керування через Excel</h2><div class="grid"><label>Excel-файл наборів<input id="file" type="file" accept=".xlsx,.xlsm"></label><div class="actions"><a class="link-button secondary" href="/api/template">Завантажити шаблон</a><a class="link-button secondary" href="/api/sets/export">Вивантажити реєстр</a></div></div><p class="hint">Перші три колонки: артикул набору, артикули відображення товарів через <b>;</b>, ціна. У колонці «Дія» доступні: <b>оновити</b>, <b>видалити</b>, <b>прийняти на облік</b>.</p><div class="actions"><button class="secondary" id="preview" type="button">Перевірити Excel</button><button id="import" type="button">Виконати операції</button></div></section>
+    <section><h2>Результат обробки файлу</h2><div class="table-wrap" id="result"><p class="empty">Файл ще не перевірявся.</p></div></section>
+    <section><h2>Реєстр наборів</h2><p class="note">Тут показані лише набори, створені через сервіс або прийняті на облік. Хорошоп не надає масового експорту наборів, тому невідомі реєстру набори автоматично не видаляються.</p><div class="actions"><button class="danger" id="delete-selected" type="button">Видалити вибрані</button><a class="link-button secondary" href="/api/sets/export">Завантажити таблицю реєстру</a></div><div class="table-wrap" id="state"><p class="empty">Завантаження реєстру...</p></div></section>
+    <section id="editor"><h2>Редагування набору</h2><div class="grid two"><label>Артикул набору<input id="edit-article" readonly></label><label>Назва<input id="edit-title"></label><label>Артикули відображення товарів<input id="edit-products"><span class="hint">Розділяйте значення крапкою з комою.</span></label><label>Ціна набору<input id="edit-price" inputmode="decimal"></label><label>Валюта<input id="edit-currency" maxlength="3"></label><label>Порядок сортування<input id="edit-sort" inputmode="numeric"></label><label>Знижка %<input id="edit-discount" inputmode="numeric"></label><label>Активний<select id="edit-enabled"><option value="true">Так</option><option value="false">Ні</option></select></label></div><div class="actions"><button id="save-editor" type="button">Зберегти зміни</button><button class="secondary" id="cancel-editor" type="button">Закрити</button></div></section>
+    <section><h2>Журнал операцій</h2><div id="activity-log"><p class="empty">Операцій ще не було.</p></div></section>
+  </main>
+  <script>
+    const activityLog=document.getElementById('activity-log'), result=document.getElementById('result'), state=document.getElementById('state'); let registry=[];
+    const esc=value=>String(value??'').replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[ch]));
+    const credentials=()=>({login:document.getElementById('login').value,password:document.getElementById('password').value,token:document.getElementById('token').value});
+    const actionText=value=>({upsert:'оновити',delete:'видалити',register:'прийняти на облік'}[value]||value);
+    const statusText=value=>({ready:'готово',synced:'синхронізовано',registered:'на обліку',deleted:'видалено',invalid:'некоректно',error:'помилка',delete_error:'помилка видалення'}[value]||value);
+    function setMessage(text,kind=''){const empty=activityLog.querySelector('.empty');if(empty)empty.remove();const entry=document.createElement('div');entry.className='log-entry '+kind;entry.textContent=`[${new Date().toLocaleTimeString()}] ${text}`;activityLog.prepend(entry)}
+    function clearCredentialErrors(){['login','password','token'].forEach(id=>document.getElementById(id).classList.remove('input-error'))}
+    function validateCredentials(){const data=credentials();clearCredentialErrors();if(data.token.trim())return true;let valid=true;if(!data.login.trim()){document.getElementById('login').classList.add('input-error');valid=false}if(!data.password.trim()){document.getElementById('password').classList.add('input-error');valid=false}if(!valid)setMessage('Вкажіть логін і пароль API або токен.','error');return valid}
+    function handleApiError(error){if(/логин|логін|парол|токен/i.test(error.message))validateCredentials();setMessage(error.message,'error')}
+    async function readResponse(response){const raw=await response.text();try{return JSON.parse(raw)}catch{return {detail:raw||'Сервер повернув порожню відповідь.'}}}
+    async function jsonApi(url,body){const response=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const data=await readResponse(response);if(!response.ok)throw new Error(data.detail||'Помилка сервера.');return data}
+    function renderResult(items){if(!items.length){result.innerHTML='<p class="empty">У файлі немає операцій.</p>';return}result.innerHTML=`<table><thead><tr><th>Рядок</th><th>Дія</th><th>Набір</th><th>Товари</th><th>Ціна</th><th>Стан</th></tr></thead><tbody>${items.map(item=>`<tr><td>${item.row_number}</td><td>${esc(actionText(item.action))}</td><td>${esc(item.article)}</td><td>${item.display_articles.map(esc).join('; ')||'-'}</td><td>${esc(item.discounted_price||'-')}</td><td><span class="tag ${esc(item.status)}">${esc(statusText(item.status))}</span>${item.message?'<br>'+esc(item.message):''}</td></tr>`).join('')}</tbody></table>`}
+    function renderState(data){registry=data.sets||[];if(!registry.length){state.innerHTML='<p class="empty">У реєстрі поки немає наборів.</p>';return}state.innerHTML=`<table><thead><tr><th></th><th>Артикул</th><th>Товари</th><th>Ціна</th><th>Назва</th><th>Активний</th><th>Стан</th><th>Змінено</th><th></th></tr></thead><tbody>${registry.map(item=>`<tr><td><input type="checkbox" data-select="${esc(item.article)}"></td><td>${esc(item.article)}</td><td>${(item.display_articles||[]).map(esc).join('; ')}</td><td><div class="price-cell"><input data-price="${esc(item.article)}" value="${esc(item.discounted_price)}"><button class="secondary" data-save-price="${esc(item.article)}" type="button">OK</button></div></td><td>${esc(item.title||'Вместе дешевле')}</td><td>${item.enabled?'Так':'Ні'}</td><td><span class="tag ${esc(item.status)}">${esc(statusText(item.status))}</span><br>${esc(item.message||'')}</td><td>${esc(item.updated_at)}</td><td><div class="actions"><button class="secondary" data-edit="${esc(item.article)}" type="button">Змінити</button><button class="danger" data-delete-one="${esc(item.article)}" type="button">Видалити</button></div></td></tr>`).join('')}</tbody></table>`;document.querySelectorAll('[data-edit]').forEach(button=>button.addEventListener('click',()=>openEditor(button.dataset.edit)));document.querySelectorAll('[data-save-price]').forEach(button=>button.addEventListener('click',()=>quickPrice(button.dataset.savePrice)));document.querySelectorAll('[data-delete-one]').forEach(button=>button.addEventListener('click',()=>deleteArticles([button.dataset.deleteOne])))}
+    async function loadState(){try{const response=await fetch('/api/state');const data=await readResponse(response);if(!response.ok)throw new Error(data.detail);renderState(data)}catch(error){state.innerHTML='<p class="empty">Не вдалося завантажити реєстр: '+esc(error.message)+'</p>';setMessage(error.message,'error')}}
+    function openEditor(article){const item=registry.find(value=>value.article===article);if(!item)return;document.getElementById('editor').classList.add('visible');document.getElementById('edit-article').value=item.article;document.getElementById('edit-title').value=item.title||'Вместе дешевле';document.getElementById('edit-products').value=(item.display_articles||[]).join('; ');document.getElementById('edit-price').value=item.discounted_price||'';document.getElementById('edit-currency').value=item.currency||'UAH';document.getElementById('edit-sort').value=item.sort_order??'';document.getElementById('edit-discount').value=item.discount_percent??'';document.getElementById('edit-enabled').value=String(item.enabled!==false);document.getElementById('editor').scrollIntoView({behavior:'smooth',block:'start'})}
+    async function quickPrice(article){if(!validateCredentials())return;const item=registry.find(value=>value.article===article);const price=document.querySelector(`[data-price="${CSS.escape(article)}"]`).value;try{setMessage('Збереження ціни...');const data=await jsonApi('/api/sets/update',{...credentials(),...item,article,discounted_price:price});if(!data.success)throw new Error(data.message);setMessage('Ціну оновлено.','ok');await loadState()}catch(error){handleApiError(error)}}
+    async function saveEditor(){if(!validateCredentials())return;try{setMessage('Збереження набору...');const data=await jsonApi('/api/sets/update',{...credentials(),article:document.getElementById('edit-article').value,title:document.getElementById('edit-title').value,display_articles:document.getElementById('edit-products').value,discounted_price:document.getElementById('edit-price').value,currency:document.getElementById('edit-currency').value,sort_order:document.getElementById('edit-sort').value,discount_percent:document.getElementById('edit-discount').value,enabled:document.getElementById('edit-enabled').value});if(!data.success)throw new Error(data.message);setMessage('Набір оновлено.','ok');document.getElementById('editor').classList.remove('visible');await loadState()}catch(error){handleApiError(error)}}
+    async function deleteArticles(articles){if(!validateCredentials())return;if(!confirm(`Видалити наборів: ${articles.length}? Дію буде надіслано до Хорошоп.`))return;try{setMessage('Видалення наборів...');const data=await jsonApi('/api/sets/delete',{...credentials(),articles});const failed=data.items.filter(item=>!item.success);setMessage(failed.length?`Видалення завершено з помилками: ${failed.map(item=>item.article).join(', ')}`:'Вибрані набори видалено.',failed.length?'error':'ok');await loadState()}catch(error){handleApiError(error)}}
+    async function deleteSelected(){const articles=[...document.querySelectorAll('[data-select]:checked')].map(node=>node.dataset.select);if(!articles.length){setMessage('Виберіть набори для видалення.','error');return}deleteArticles(articles)}
+    async function fileAction(endpoint,importing){const file=document.getElementById('file').files[0];if(!file){setMessage('Виберіть Excel-файл.','error');return}if(!validateCredentials())return;const body=new FormData();body.append('file',file);for(const [key,value] of Object.entries(credentials()))body.append(key,value);try{setMessage(importing?'Виконання операцій...':'Перевірка файлу...');const response=await fetch(endpoint,{method:'POST',body});const data=await readResponse(response);if(!response.ok)throw new Error(data.detail||'Помилка сервера.');renderResult(data.items||[]);setMessage(importing?`Готово: успішно ${data.imported}, помилок ${data.errors}.`:`Готово до імпорту: ${data.ready}, помилок ${data.errors}.`,data.errors?'error':'ok');if(importing)await loadState()}catch(error){handleApiError(error)}}
+    document.getElementById('preview').addEventListener('click',()=>fileAction('/api/preview',false));document.getElementById('import').addEventListener('click',()=>fileAction('/api/import',true));document.getElementById('delete-selected').addEventListener('click',deleteSelected);document.getElementById('save-editor').addEventListener('click',saveEditor);document.getElementById('cancel-editor').addEventListener('click',()=>document.getElementById('editor').classList.remove('visible'));['login','password','token'].forEach(id=>document.getElementById(id).addEventListener('input',clearCredentialErrors));loadState();
+  </script>
+</body></html>"""
+
+
 app = FastAPI(title="Набори Хорошоп")
 
 
@@ -543,7 +601,7 @@ async def update_set(request: Request) -> dict[str, Any]:
     try:
         data = await request.json()
         if not isinstance(data, dict):
-            raise HoroshopSetsError("Данные редактирования должны быть объектом JSON.")
+            raise HoroshopSetsError("Дані редагування мають бути об'єктом JSON.")
         return await asyncio.to_thread(update_tracked_set, data)
     except (HoroshopSetsError, ValueError) as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
@@ -554,7 +612,7 @@ async def delete_sets(request: Request) -> dict[str, Any]:
     try:
         data = await request.json()
         if not isinstance(data, dict):
-            raise HoroshopSetsError("Данные удаления должны быть объектом JSON.")
+            raise HoroshopSetsError("Дані видалення мають бути об'єктом JSON.")
         return await asyncio.to_thread(delete_tracked_sets, data)
     except (HoroshopSetsError, ValueError) as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
