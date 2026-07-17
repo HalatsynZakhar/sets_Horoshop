@@ -137,6 +137,7 @@ function Update-ProjectIfNeeded {
     if ($LASTEXITCODE -ne 0) { throw "Git hard reset failed." }
     git -C $AppDir clean -fd
     if ($LASTEXITCODE -ne 0) { throw "Could not clean untracked deployment files." }
+    Ensure-PythonEnvironment
     & $PythonExe -m pip install -r (Join-Path $AppDir "requirements.txt")
     if ($LASTEXITCODE -ne 0) { throw "Could not install dependencies after update." }
     return $true

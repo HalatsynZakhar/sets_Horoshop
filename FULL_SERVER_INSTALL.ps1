@@ -11,6 +11,12 @@ param(
 
 $ErrorActionPreference = "Stop"
 $TaskName = "HoroshopSets"
+$InstallLog = Join-Path $env:ProgramData "HoroshopSets-install.log"
+$TranscriptStarted = $false
+
+[Net.ServicePointManager]::SecurityProtocol = `
+    [Net.ServicePointManager]::SecurityProtocol -bor `
+    [Net.SecurityProtocolType]::Tls12
 
 function Assert-Administrator {
     $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
@@ -20,22 +26,54 @@ function Assert-Administrator {
     }
 }
 
-function Ensure-Command {
-    param([string]$Name, [string]$WingetId)
-    if (Get-Command $Name -ErrorAction SilentlyContinue) { return }
-    if (!(Get-Command winget -ErrorAction SilentlyContinue)) {
-        throw "$Name is not installed and winget is unavailable. Install it, then run this script again."
-    }
-    Write-Output "Installing $Name..."
-    winget install --id $WingetId --exact --silent --accept-package-agreements --accept-source-agreements
-    if ($LASTEXITCODE -ne 0) { throw "winget could not install $Name." }
-    Update-CurrentPath
-}
-
 function Update-CurrentPath {
     $machinePath = [Environment]::GetEnvironmentVariable("Path", "Machine")
     $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
     $env:Path = "$machinePath;$userPath"
+}
+
+function Install-WingetPackage {
+    param([string]$PackageId, [string]$DisplayName)
+    Write-Output "Installing $DisplayName through winget..."
+    winget install --id $PackageId --exact --silent --accept-package-agreements --accept-source-agreements
+    if ($LASTEXITCODE -ne 0) { throw "winget could not install $DisplayName." }
+}
+
+function Assert-ValidSignature {
+    param([string]$Path, [string]$DisplayName)
+    if ((Get-AuthenticodeSignature -FilePath $Path).Status -ne "Valid") {
+        throw "The installer signature for $DisplayName is invalid."
+    }
+}
+
+function Install-PythonDirect {
+    $version = "3.13.14"
+    $installer = Join-Path $env:TEMP "python-$version-amd64.exe"
+    Invoke-WebRequest -Uri "https://www.python.org/ftp/python/$version/python-$version-amd64.exe" -OutFile $installer -UseBasicParsing
+    Assert-ValidSignature -Path $installer -DisplayName "Python"
+    $process = Start-Process -FilePath $installer -ArgumentList "/quiet InstallAllUsers=1 PrependPath=1 Include_test=0" -Wait -PassThru
+    if ($process.ExitCode -ne 0) { throw "Python installer exited with code $($process.ExitCode)." }
+}
+
+function Install-GitDirect {
+    $release = Invoke-RestMethod -Uri "https://api.github.com/repos/git-for-windows/git/releases/latest" -Headers @{ "User-Agent" = "HoroshopSets-Installer" }
+    $asset = $release.assets | Where-Object { $_.name -match "^Git-.+-64-bit\.exe$" } | Select-Object -First 1
+    if ($null -eq $asset) { throw "Could not find a 64-bit Git for Windows installer." }
+    $installer = Join-Path $env:TEMP $asset.name
+    Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $installer -UseBasicParsing
+    Assert-ValidSignature -Path $installer -DisplayName "Git"
+    $process = Start-Process -FilePath $installer -ArgumentList "/VERYSILENT /NORESTART /SUPPRESSMSGBOXES /SP-" -Wait -PassThru
+    if ($process.ExitCode -ne 0) { throw "Git installer exited with code $($process.ExitCode)." }
+}
+
+function Test-PythonInstalled {
+    foreach ($command in @("py", "python")) {
+        if (Get-Command $command -ErrorAction SilentlyContinue) {
+            & $command --version 2>$null | Out-Null
+            if ($LASTEXITCODE -eq 0) { return $true }
+        }
+    }
+    return $false
 }
 
 function Get-PythonCommand {
@@ -50,10 +88,77 @@ function Invoke-TaskCommand {
     if ($LASTEXITCODE -ne 0) { throw "schtasks failed: $($Arguments -join ' ')" }
 }
 
+function Stop-ExistingRuntime {
+    Start-Process -FilePath "schtasks.exe" -ArgumentList @("/End", "/TN", $TaskName) -WindowStyle Hidden -Wait | Out-Null
+    $paths = @(
+        (Join-Path $InstallDir "sets_server.py"),
+        (Join-Path $InstallDir "scripts\supervisor.ps1"),
+        (Join-Path $InstallDir "scripts\auto_update.bat")
+    )
+    Get-CimInstance Win32_Process | Where-Object {
+        $commandLine = [string]$_.CommandLine
+        $commandLine -and ($paths | Where-Object {
+            $commandLine.IndexOf($_, [StringComparison]::OrdinalIgnoreCase) -ge 0
+        })
+    } | ForEach-Object {
+        Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
+        Write-Output "Stopped existing process: $($_.Name), PID $($_.ProcessId)."
+    }
+    Remove-Item -LiteralPath (Join-Path $InstallDir "logs\horoshop_sets.pid") -Force -ErrorAction SilentlyContinue
+}
+
+function Grant-ProjectAccess {
+    New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
+    & icacls.exe $InstallDir /grant "*S-1-5-18:(OI)(CI)M" /T /C | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "Could not grant SYSTEM access to $InstallDir." }
+}
+
+function Start-AndVerifyService {
+    $pidFile = Join-Path $InstallDir "logs\horoshop_sets.pid"
+    $supervisorLog = Join-Path $InstallDir "logs\supervisor.log"
+    Remove-Item -LiteralPath $pidFile -Force -ErrorAction SilentlyContinue
+    Invoke-TaskCommand -Arguments @("/Run", "/TN", $TaskName)
+    $deadline = (Get-Date).AddSeconds(90)
+    while ((Get-Date) -lt $deadline) {
+        Start-Sleep -Seconds 2
+        if (!(Test-Path $pidFile)) { continue }
+        $savedPid = 0
+        if (![int]::TryParse((Get-Content $pidFile -Raw).Trim(), [ref]$savedPid)) { continue }
+        $process = Get-CimInstance Win32_Process -Filter "ProcessId = $savedPid" -ErrorAction SilentlyContinue
+        if ($null -ne $process -and [string]$process.CommandLine -like "*sets_server.py*") {
+            Write-Output "Web server verified. PID: $savedPid."
+            return
+        }
+    }
+    $details = if (Test-Path $supervisorLog) { (Get-Content $supervisorLog -Tail 20) -join "`n" } else { "Supervisor log is empty." }
+    throw "The scheduled task did not keep the web server running. See $supervisorLog`n$details"
+}
+
 try {
+    try {
+        Start-Transcript -Path $InstallLog -Append -Force | Out-Null
+        $TranscriptStarted = $true
+    }
+    catch {
+        Write-Warning "Could not start installer transcript: $($_.Exception.Message)"
+    }
     Assert-Administrator
-    Ensure-Command -Name "git" -WingetId "Git.Git"
-    Ensure-Command -Name "py" -WingetId "Python.Python.3.13"
+    if (!(Get-Command git -ErrorAction SilentlyContinue)) {
+        if (Get-Command winget -ErrorAction SilentlyContinue) {
+            Install-WingetPackage -PackageId "Git.Git" -DisplayName "Git"
+        }
+        else {
+            Install-GitDirect
+        }
+    }
+    if (!(Test-PythonInstalled)) {
+        if (Get-Command winget -ErrorAction SilentlyContinue) {
+            Install-WingetPackage -PackageId "Python.Python.3.13" -DisplayName "Python 3.13"
+        }
+        else {
+            Install-PythonDirect
+        }
+    }
     Update-CurrentPath
 
     $safeDirectory = $InstallDir.Replace("\", "/")
@@ -64,6 +169,7 @@ try {
     }
 
     if (Test-Path (Join-Path $InstallDir ".git")) {
+        Stop-ExistingRuntime
         git -C $InstallDir fetch origin $Branch
         if ($LASTEXITCODE -ne 0) { throw "Could not fetch origin/$Branch." }
         git -C $InstallDir reset --hard "origin/$Branch"
@@ -78,6 +184,8 @@ try {
         git clone --branch $Branch $Repository $InstallDir
         if ($LASTEXITCODE -ne 0) { throw "Could not clone the repository." }
     }
+
+    Grant-ProjectAccess
 
     $configPath = Join-Path $InstallDir "config.json"
     if (!(Test-Path $configPath)) {
@@ -119,14 +227,23 @@ try {
     $launcher = Join-Path $InstallDir "scripts\auto_update.bat"
     $taskAction = "`"$launcher`" `"$Branch`" `"$CheckIntervalMinutes`""
     Invoke-TaskCommand -Arguments @("/Create", "/TN", $TaskName, "/SC", "ONSTART", "/TR", $taskAction, "/RU", "SYSTEM", "/RL", "HIGHEST", "/F")
-    Invoke-TaskCommand -Arguments @("/Run", "/TN", $TaskName)
+    $task = Get-ScheduledTask -TaskName $TaskName
+    $task.Settings.ExecutionTimeLimit = "PT0S"
+    Set-ScheduledTask -InputObject $task | Out-Null
+    if ((Get-ScheduledTask -TaskName $TaskName).Settings.ExecutionTimeLimit -ne "PT0S") {
+        throw "Could not disable the scheduled task execution limit."
+    }
+    Start-AndVerifyService
 
     Write-Host "Installation completed. Web panel: http://<server>:$port" -ForegroundColor Green
+    Write-Host "Installer log: $InstallLog" -ForegroundColor Green
 }
 catch {
     Write-Host "Installation failed: $($_.Exception.Message)" -ForegroundColor Red
+    Write-Host "Installer log: $InstallLog" -ForegroundColor Yellow
     exit 1
 }
 finally {
+    if ($TranscriptStarted) { Stop-Transcript | Out-Null }
     if (!$NoPause) { Read-Host "Press Enter to close" }
 }
