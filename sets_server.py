@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import shutil
 import threading
 from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 
 from horoshop_sets import (
     CatalogIndex,
@@ -33,6 +34,7 @@ MAX_UPLOAD_BYTES = 20 * 1024 * 1024
 settings: Settings | None = None
 state_store: StateStore | None = None
 state_lock = threading.Lock()
+logger = logging.getLogger(__name__)
 
 
 def get_runtime() -> tuple[Settings, StateStore]:
@@ -249,7 +251,10 @@ def page_html() -> str:
       setMessage(importing ? 'Імпорт наборів...' : 'Перевірка Excel...');
       try {
         const response = await fetch(endpoint, {method: 'POST', body: formData()});
-        const data = await response.json();
+        const raw = await response.text();
+        let data;
+        try { data = JSON.parse(raw); }
+        catch { data = {detail: raw || 'Сервер повернув порожню відповідь.'}; }
         if (!response.ok) throw new Error(data.detail || 'Помилка запиту.');
         renderItems(data.items || []);
         setMessage(importing ? `Готово: імпортовано ${data.imported}, помилок ${data.errors}.` : `Готово до імпорту: ${data.ready}, помилок ${data.errors}.`, importing && data.errors ? 'error' : 'ok');
@@ -266,6 +271,15 @@ def page_html() -> str:
 
 
 app = FastAPI(title="Набори Хорошоп")
+
+
+@app.exception_handler(Exception)
+async def unexpected_error(_: Request, error: Exception) -> JSONResponse:
+    logger.exception("Unhandled web request error", exc_info=error)
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Внутрішня помилка сервера. Перевірте logs/server-error.log."},
+    )
 
 
 @app.get("/", response_class=HTMLResponse)
