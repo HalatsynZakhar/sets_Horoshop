@@ -22,6 +22,7 @@ from horoshop_sets import (
     Settings,
     StateStore,
     build_excel_template,
+    build_set_article,
     build_state_excel,
     import_payload,
     import_results,
@@ -266,13 +267,12 @@ def create_manual_set(data: dict[str, Any]) -> dict[str, Any]:
     credentials = credentials_from_json(data)
     runtime_settings, store = get_runtime()
     article = normalize(data.get("article"))
-    if not article:
-        raise HoroshopSetsError("Вкажіть артикул набору.")
+    display_articles = split_display_articles(data.get("display_articles", ""))
+    article = article or build_set_article(display_articles)
     with state_lock:
         if store.contains(article):
             raise HoroshopSetsError("Цей набір уже є в реєстрі. Скористайтеся редагуванням у таблиці нижче.")
 
-    display_articles = split_display_articles(data.get("display_articles", ""))
     price = parse_price(data.get("discounted_price", ""))
     row = SetRow(article, display_articles, price, row_number=1)
     client = HoroshopClient(runtime_settings, credentials)

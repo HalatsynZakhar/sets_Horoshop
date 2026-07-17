@@ -40,7 +40,7 @@ class HoroshopSetsTests(unittest.TestCase):
         self.assertEqual(
             [cell.value for cell in next(workbook.active.iter_rows(max_row=1))],
             [
-                "Артикул набору",
+                "Артикул набору (необов'язково)",
                 "Артикули відображення товарів",
                 "Кінцева ціна",
             ],
@@ -58,6 +58,17 @@ class HoroshopSetsTests(unittest.TestCase):
             )
         )
         self.assertEqual(rows, [SetRow("SET-1", ("show-a", "SHOW-B"), Decimal("199.50"), 2)])
+
+    def test_excel_builds_article_when_it_is_blank(self) -> None:
+        rows = parse_excel_sets(
+            self.excel_bytes(
+                [
+                    ("Артикул набору (необов'язково)", "Артикули відображення товарів", "Кінцева ціна"),
+                    (None, "show-a; SHOW-B", "199,50"),
+                ]
+            )
+        )
+        self.assertEqual(rows[0].article, "show-a.SHOW-B")
 
     def test_excel_supports_delete_action_without_price_or_products(self) -> None:
         rows = parse_excel_sets(

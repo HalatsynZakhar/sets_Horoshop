@@ -63,7 +63,7 @@
     <section>
       <h2>Створити набір вручну</h2>
       <div class="grid">
-        <label>Артикул набору<input id="create-article"></label>
+        <label>Артикул набору<input id="create-article"><span class="hint">Необов'язково: без нього артикул буде складено з товарів через крапку.</span></label>
         <label>Артикули відображення товарів<input id="create-products"><span class="hint">Щонайменше два артикули, розділені крапкою з комою.</span></label>
         <label>Кінцева ціна<input id="create-price" inputmode="decimal"></label>
       </div>
@@ -76,7 +76,7 @@
         <label>Excel-файл наборів<input id="file" type="file" accept=".xlsx,.xlsm"></label>
         <div class="actions"><a class="link-button secondary" href="/api/template">Завантажити шаблон</a><a class="link-button secondary" href="/api/sets/export">Вивантажити реєстр</a></div>
       </div>
-      <p class="hint">Шаблон містить лише три колонки: артикул набору, артикули товарів через <b>;</b> і кінцева ціна. У вивантаженому реєстрі є додаткова колонка <b>«Видалити (Так)»</b>: впишіть <b>Так</b> лише в рядках, які потрібно видалити. Порожня клітинка означає створення або оновлення набору.</p>
+      <p class="hint">Шаблон містить лише три колонки: артикул набору, артикули товарів через <b>;</b> і кінцева ціна. Артикул набору можна не заповнювати: він буде складений з артикулів товарів через крапку. У вивантаженому реєстрі є додаткова колонка <b>«Видалити (Так)»</b>: впишіть <b>Так</b> лише в рядках, які потрібно видалити. Порожня клітинка означає створення або оновлення набору.</p>
       <div class="actions"><button class="secondary" id="preview" type="button">Перевірити Excel</button><button id="import" type="button">Виконати операції</button></div>
     </section>
 

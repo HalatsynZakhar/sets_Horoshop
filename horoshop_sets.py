@@ -154,6 +154,10 @@ def split_display_articles(value: Any) -> tuple[str, ...]:
     return values
 
 
+def build_set_article(display_articles: tuple[str, ...]) -> str:
+    return ".".join(display_articles)
+
+
 def parse_action(value: Any) -> str:
     action = normalize(value).casefold()
     aliases = {
@@ -218,20 +222,31 @@ def parse_excel_sets(data: bytes) -> list[SetRow]:
             if not row or all(value is None for value in row[:9]):
                 continue
             article = normalize(row[0] if len(row) > 0 else "")
-            if article.casefold() in {"article", "артикул", "артикул набору", "артикул набора"}:
+            if article.casefold() in {
+                "article",
+                "артикул",
+                "артикул набору",
+                "артикул набору (необов'язково)",
+                "артикул набора",
+            }:
                 continue
-            if not article:
-                raise ValueError(f"Рядок {row_number}: вкажіть артикул набору.")
-            key = article.casefold()
-            if key in seen_articles:
-                raise ValueError(f"Рядок {row_number}: артикул набору '{article}' повторюється.")
-            seen_articles.add(key)
             try:
                 action = parse_action(row[3] if len(row) > 3 else "")
                 if action == "delete":
+                    if not article:
+                        raise ValueError("для видалення вкажіть артикул набору.")
+                    key = article.casefold()
+                    if key in seen_articles:
+                        raise ValueError(f"артикул набору '{article}' повторюється.")
+                    seen_articles.add(key)
                     rows.append(SetRow(article, (), None, row_number, action=action))
                     continue
                 display_articles = split_display_articles(row[1] if len(row) > 1 else "")
+                article = article or build_set_article(display_articles)
+                key = article.casefold()
+                if key in seen_articles:
+                    raise ValueError(f"артикул набору '{article}' повторюється.")
+                seen_articles.add(key)
                 price = parse_price(row[2] if len(row) > 2 else "")
                 title = ""
                 enabled = True
@@ -265,7 +280,7 @@ def build_excel_template() -> bytes:
     workbook = Workbook()
     worksheet = workbook.active
     worksheet.title = "Наборы"
-    worksheet.append(["Артикул набору", "Артикули відображення товарів", "Кінцева ціна"])
+    worksheet.append(["Артикул набору (необов'язково)", "Артикули відображення товарів", "Кінцева ціна"])
     worksheet.freeze_panes = "A2"
     worksheet.auto_filter.ref = "A1:C1"
     worksheet.column_dimensions["A"].width = 28
