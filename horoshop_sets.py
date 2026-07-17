@@ -82,7 +82,7 @@ def endpoint_url(domain: str, endpoint: str) -> str:
 
 
 def load_settings(config_file: Path) -> Settings:
-    with config_file.open("r", encoding="utf-8") as file:
+    with config_file.open("r", encoding="utf-8-sig") as file:
         raw = json.load(file)
     if not isinstance(raw, dict):
         raise ValueError("config.json must contain an object.")

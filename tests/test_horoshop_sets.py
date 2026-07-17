@@ -17,6 +17,7 @@ from horoshop_sets import (
     build_excel_template,
     import_payload,
     import_results,
+    load_settings,
     parse_excel_sets,
     prepare_plan,
 )
@@ -115,6 +116,16 @@ class HoroshopSetsTests(unittest.TestCase):
             )["SET-1"],
             (True, "Imported"),
         )
+
+    def test_settings_accept_utf8_bom_from_windows_notepad(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            config_path = Path(directory) / "config.json"
+            config_path.write_text(
+                '{"server":{"port":8093},"horoshop":{"domain":"https://shop.example.com"}}',
+                encoding="utf-8-sig",
+            )
+            settings = load_settings(config_path)
+        self.assertEqual(settings.domain, "https://shop.example.com")
 
 
 if __name__ == "__main__":
