@@ -203,6 +203,18 @@ class HoroshopSetsTests(unittest.TestCase):
         self.assertEqual(settings.title, "Разом дешевше")
         self.assertEqual(settings.public_log_file, config_path.parent / "public-logs" / "visible.log")
 
+    def test_settings_repair_unescaped_windows_public_log_path(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            config_path = Path(directory) / "config.json"
+            config_path.write_text(
+                r'{"horoshop":{"domain":"https://shop.example.com"},"logging":{"public_log_path":"C:\ShareFiles\public","public_log_name":"visible.log"}}',
+                encoding="utf-8",
+            )
+            settings = load_settings(config_path)
+            repaired_config = config_path.read_text(encoding="utf-8")
+        self.assertEqual(settings.public_log_file, Path(r"C:\ShareFiles\public") / "visible.log")
+        self.assertIn(r'"public_log_path":"C:\\ShareFiles\\public"', repaired_config)
+
 
 if __name__ == "__main__":
     unittest.main()

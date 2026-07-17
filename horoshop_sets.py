@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import json
 import os
+import re
 import shutil
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -18,6 +19,7 @@ from openpyxl.styles import Alignment, Font, PatternFill
 
 DEFAULT_EXPORT_LIMIT = 500
 SET_TITLE = "Разом дешевше"
+PUBLIC_LOG_PATH_JSON_PATTERN = re.compile(r'("public_log_path"\s*:\s*")(?P<value>[^"]*)(")')
 
 
 class HoroshopSetsError(RuntimeError):
@@ -101,9 +103,30 @@ def endpoint_url(domain: str, endpoint: str) -> str:
     return urljoin(f"{domain.rstrip('/')}/", endpoint.lstrip("/"))
 
 
+def repair_public_log_path_json(config_text: str) -> str:
+    def replace_path(match: re.Match[str]) -> str:
+        path_value = re.sub(r"(?<!\\)\\(?!\\)", lambda _: "\\\\", match.group("value"))
+        return f'{match.group(1)}{path_value}{match.group(3)}'
+
+    return PUBLIC_LOG_PATH_JSON_PATTERN.sub(replace_path, config_text)
+
+
 def load_settings(config_file: Path) -> Settings:
-    with config_file.open("r", encoding="utf-8-sig") as file:
-        raw = json.load(file)
+    config_text = config_file.read_text(encoding="utf-8-sig")
+    try:
+        raw = json.loads(config_text)
+    except json.JSONDecodeError as original_error:
+        repaired_config_text = repair_public_log_path_json(config_text)
+        if repaired_config_text == config_text:
+            raise original_error
+        try:
+            raw = json.loads(repaired_config_text)
+        except json.JSONDecodeError:
+            raise original_error
+        try:
+            config_file.write_text(repaired_config_text, encoding="utf-8")
+        except OSError:
+            pass
     if not isinstance(raw, dict):
         raise ValueError("config.json must contain an object.")
 
