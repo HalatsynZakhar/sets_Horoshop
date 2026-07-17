@@ -164,6 +164,14 @@ def parse_action(value: Any) -> str:
         "upsert": "upsert",
         "удалить": "delete",
         "delete": "delete",
+        "да": "delete",
+        "так": "delete",
+        "yes": "delete",
+        "1": "delete",
+        "нет": "upsert",
+        "ні": "upsert",
+        "no": "upsert",
+        "0": "upsert",
         "принять на учет": "register",
         "принять на учёт": "register",
         "учет": "register",
@@ -171,7 +179,7 @@ def parse_action(value: Any) -> str:
         "register": "register",
     }
     if action not in aliases:
-        raise ValueError("действие должно быть: обновить, удалить или принять на учет.")
+        raise ValueError("у колонці «Видалити (Так)» вкажіть Так або залиште її порожньою.")
     return aliases[action]
 
 
@@ -225,13 +233,11 @@ def parse_excel_sets(data: bytes) -> list[SetRow]:
                     continue
                 display_articles = split_display_articles(row[1] if len(row) > 1 else "")
                 price = parse_price(row[2] if len(row) > 2 else "")
-                title = normalize(row[4] if len(row) > 4 else "")
-                enabled = parse_bool(row[5] if len(row) > 5 else "", default=True)
-                sort_order = parse_optional_int(row[6] if len(row) > 6 else "", "порядок сортировки", 0)
-                discount_percent = parse_optional_int(row[7] if len(row) > 7 else "", "скидка", 0, 100)
-                currency = normalize(row[8] if len(row) > 8 else "").upper()
-                if currency and len(currency) != 3:
-                    raise ValueError("валюта должна состоять из трех букв.")
+                title = ""
+                enabled = True
+                sort_order = None
+                discount_percent = None
+                currency = ""
             except ValueError as error:
                 raise ValueError(f"Рядок {row_number}: {error}") from error
             rows.append(
@@ -259,30 +265,12 @@ def build_excel_template() -> bytes:
     workbook = Workbook()
     worksheet = workbook.active
     worksheet.title = "Наборы"
-    worksheet.append(
-        [
-            "Артикул набора",
-            "Артикулы отображения товаров",
-            "Цена набора",
-            "Действие",
-            "Название",
-            "Активен",
-            "Порядок сортировки",
-            "Скидка %",
-            "Валюта",
-        ]
-    )
+    worksheet.append(["Артикул набору", "Артикули відображення товарів", "Кінцева ціна"])
     worksheet.freeze_panes = "A2"
-    worksheet.auto_filter.ref = "A1:I1"
+    worksheet.auto_filter.ref = "A1:C1"
     worksheet.column_dimensions["A"].width = 28
     worksheet.column_dimensions["B"].width = 58
     worksheet.column_dimensions["C"].width = 18
-    worksheet.column_dimensions["D"].width = 20
-    worksheet.column_dimensions["E"].width = 28
-    worksheet.column_dimensions["F"].width = 12
-    worksheet.column_dimensions["G"].width = 20
-    worksheet.column_dimensions["H"].width = 14
-    worksheet.column_dimensions["I"].width = 12
 
     header_fill = PatternFill("solid", fgColor="166534")
     for cell in worksheet[1]:
@@ -420,10 +408,6 @@ def import_payload(items: list[PlanItem], settings: Settings) -> list[dict[str, 
             "enabled": item.enabled,
             "products": list(item.products),
         }
-        if item.sort_order is not None:
-            value["sortOrder"] = item.sort_order
-        if item.discount_percent is not None:
-            value["discountPercent"] = item.discount_percent
         payload.append(value)
     return payload
 
@@ -550,27 +534,11 @@ def build_state_excel(entries: list[dict[str, Any]]) -> bytes:
     workbook = Workbook()
     worksheet = workbook.active
     worksheet.title = "Наборы"
-    headers = [
-        "Артикул набора",
-        "Артикулы отображения товаров",
-        "Цена набора",
-        "Действие",
-        "Название",
-        "Активен",
-        "Порядок сортировки",
-        "Скидка %",
-        "Валюта",
-        "Статус",
-        "Дата изменения",
-        "Сообщение",
-    ]
+    headers = ["Артикул набору", "Артикули відображення товарів", "Кінцева ціна", "Видалити (Так)"]
     worksheet.append(headers)
     worksheet.freeze_panes = "A2"
-    worksheet.auto_filter.ref = "A1:L1"
-    for column, width in {
-        "A": 28, "B": 52, "C": 16, "D": 18, "E": 28, "F": 12,
-        "G": 18, "H": 12, "I": 12, "J": 16, "K": 26, "L": 48,
-    }.items():
+    worksheet.auto_filter.ref = "A1:D1"
+    for column, width in {"A": 28, "B": 52, "C": 16, "D": 14}.items():
         worksheet.column_dimensions[column].width = width
     header_fill = PatternFill("solid", fgColor="166534")
     for cell in worksheet[1]:
@@ -582,15 +550,7 @@ def build_state_excel(entries: list[dict[str, Any]]) -> bytes:
             entry.get("article", ""),
             "; ".join(entry.get("display_articles", [])),
             entry.get("discounted_price", ""),
-            "обновить",
-            entry.get("title", ""),
-            "Да" if entry.get("enabled", True) else "Нет",
-            entry.get("sort_order", ""),
-            entry.get("discount_percent", ""),
-            entry.get("currency", ""),
-            entry.get("status", ""),
-            entry.get("updated_at", ""),
-            entry.get("message", ""),
+            "",
         ])
     for row in range(2, worksheet.max_row + 1):
         worksheet.cell(row=row, column=1).number_format = "@"

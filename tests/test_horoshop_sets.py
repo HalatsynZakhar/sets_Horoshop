@@ -15,6 +15,7 @@ from horoshop_sets import (
     Settings,
     StateStore,
     build_excel_template,
+    build_state_excel,
     import_payload,
     import_results,
     load_settings,
@@ -39,15 +40,9 @@ class HoroshopSetsTests(unittest.TestCase):
         self.assertEqual(
             [cell.value for cell in next(workbook.active.iter_rows(max_row=1))],
             [
-                "Артикул набора",
-                "Артикулы отображения товаров",
-                "Цена набора",
-                "Действие",
-                "Название",
-                "Активен",
-                "Порядок сортировки",
-                "Скидка %",
-                "Валюта",
+                "Артикул набору",
+                "Артикули відображення товарів",
+                "Кінцева ціна",
             ],
         )
         self.assertEqual(workbook.active["A2"].number_format, "@")
@@ -68,8 +63,8 @@ class HoroshopSetsTests(unittest.TestCase):
         rows = parse_excel_sets(
             self.excel_bytes(
                 [
-                    ("Артикул набора", "Артикулы отображения товаров", "Цена набора", "Действие"),
-                    ("SET-1", None, None, "удалить"),
+                    ("Артикул набору", "Артикули відображення товарів", "Кінцева ціна", "Видалити (Так)"),
+                    ("SET-1", None, None, "Так"),
                 ]
             )
         )
@@ -77,17 +72,27 @@ class HoroshopSetsTests(unittest.TestCase):
         self.assertEqual(rows[0].action, "delete")
         self.assertIsNone(rows[0].discounted_price)
 
-    def test_excel_preserves_zero_sort_order_and_disabled_state(self) -> None:
+    def test_excel_treats_blank_delete_marker_as_upsert(self) -> None:
         rows = parse_excel_sets(
             self.excel_bytes(
                 [
-                    ("Артикул набора", "Артикулы отображения товаров", "Цена набора", "Действие", "Название", "Активен", "Порядок сортировки"),
-                    ("SET-1", "A; B", 100, "обновить", "Название", False, 0),
+                    ("Артикул набору", "Артикули відображення товарів", "Кінцева ціна", "Видалити (Так)"),
+                    ("SET-1", "A; B", 100, ""),
                 ]
             )
         )
-        self.assertFalse(rows[0].enabled)
-        self.assertEqual(rows[0].sort_order, 0)
+        self.assertEqual(rows[0].action, "upsert")
+        self.assertEqual(rows[0].display_articles, ("A", "B"))
+
+    def test_registry_export_has_explicit_delete_marker(self) -> None:
+        workbook = load_workbook(
+            io.BytesIO(build_state_excel([{"article": "SET-1", "display_articles": ["A", "B"], "discounted_price": "100"}])),
+            read_only=True,
+        )
+        worksheet = workbook.active
+        self.assertEqual(worksheet["D1"].value, "Видалити (Так)")
+        self.assertIsNone(worksheet["D2"].value)
+        workbook.close()
 
     def test_catalog_resolution_prefers_exact_then_case_insensitive(self) -> None:
         catalog = CatalogIndex.from_raw(

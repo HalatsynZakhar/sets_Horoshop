@@ -27,8 +27,6 @@ from horoshop_sets import (
     import_results,
     load_settings,
     parse_excel_sets,
-    parse_bool,
-    parse_optional_int,
     parse_price,
     prepare_plan,
     remove_results,
@@ -228,22 +226,9 @@ def editor_plan(data: dict[str, Any], credentials: Credentials) -> tuple[PlanIte
         raise HoroshopSetsError("У наборі має бути щонайменше два товари.")
 
     price = parse_price(data.get("discounted_price", existing.get("discounted_price", "")))
-    title = normalize(data.get("title", existing.get("title", runtime_settings.title)))
-    enabled = parse_bool(data.get("enabled", existing.get("enabled", True)), default=True)
-    sort_order = parse_optional_int(
-        data.get("sort_order", existing.get("sort_order", "")),
-        "порядок сортировки",
-        0,
-    )
-    discount_percent = parse_optional_int(
-        data.get("discount_percent", existing.get("discount_percent", "")),
-        "скидка",
-        0,
-        100,
-    )
-    currency = normalize(data.get("currency", existing.get("currency", runtime_settings.currency))).upper()
-    if len(currency) != 3:
-        raise HoroshopSetsError("Валюта має складатися з трьох літер.")
+    title = normalize(existing.get("title")) or runtime_settings.title
+    enabled = bool(existing.get("enabled", True))
+    currency = normalize(existing.get("currency")) or runtime_settings.currency
 
     client = HoroshopClient(runtime_settings, credentials)
     row = SetRow(
@@ -253,8 +238,8 @@ def editor_plan(data: dict[str, Any], credentials: Credentials) -> tuple[PlanIte
         row_number=1,
         title=title,
         enabled=enabled,
-        sort_order=sort_order,
-        discount_percent=discount_percent,
+        sort_order=None,
+        discount_percent=None,
         currency=currency,
     )
     item = prepare_plan([row], CatalogIndex.from_raw(client.export_catalog()))[0]
@@ -273,6 +258,37 @@ def update_tracked_set(data: dict[str, Any]) -> dict[str, Any]:
     )
     with state_lock:
         store.record(item, "synced" if result[0] else "error", result[1])
+        store.save()
+    return {"item": serialise_item(item), "success": result[0], "message": result[1]}
+
+
+def create_manual_set(data: dict[str, Any]) -> dict[str, Any]:
+    credentials = credentials_from_json(data)
+    runtime_settings, store = get_runtime()
+    article = normalize(data.get("article"))
+    if not article:
+        raise HoroshopSetsError("Вкажіть артикул набору.")
+    with state_lock:
+        if store.contains(article):
+            raise HoroshopSetsError("Цей набір уже є в реєстрі. Скористайтеся редагуванням у таблиці нижче.")
+
+    display_articles = split_display_articles(data.get("display_articles", ""))
+    price = parse_price(data.get("discounted_price", ""))
+    row = SetRow(article, display_articles, price, row_number=1)
+    client = HoroshopClient(runtime_settings, credentials)
+    item = prepare_plan([row], CatalogIndex.from_raw(client.export_catalog()))[0]
+    if item.error:
+        raise HoroshopSetsError(item.error)
+
+    result = import_results(client.import_sets(import_payload([item], runtime_settings))).get(
+        item.article,
+        (False, "API не повернуло результат для цього набору."),
+    )
+    with state_lock:
+        if result[0]:
+            store.record(item, "synced", result[1])
+        else:
+            store.record_failed_attempt(item, result[1])
         store.save()
     return {"item": serialise_item(item), "success": result[0], "message": result[1]}
 
@@ -311,7 +327,7 @@ def delete_tracked_sets(data: dict[str, Any]) -> dict[str, Any]:
 
 
 def page_html() -> str:
-    return page_html_uk()
+    return (PROJECT_DIR / "web_ui.html").read_text(encoding="utf-8")
 
     return """<!doctype html>
 <html lang="ru">
@@ -603,6 +619,17 @@ async def update_set(request: Request) -> dict[str, Any]:
         if not isinstance(data, dict):
             raise HoroshopSetsError("Дані редагування мають бути об'єктом JSON.")
         return await asyncio.to_thread(update_tracked_set, data)
+    except (HoroshopSetsError, ValueError) as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+
+
+@app.post("/api/sets/create")
+async def create_set(request: Request) -> dict[str, Any]:
+    try:
+        data = await request.json()
+        if not isinstance(data, dict):
+            raise HoroshopSetsError("Дані набору мають бути об'єктом JSON.")
+        return await asyncio.to_thread(create_manual_set, data)
     except (HoroshopSetsError, ValueError) as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
 

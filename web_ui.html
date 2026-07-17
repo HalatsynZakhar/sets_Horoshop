@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="uk">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Набори Хорошоп</title>
+  <style>
+    :root { font-family: Arial, sans-serif; color: #183126; background: #f3f6f4; }
+    * { box-sizing: border-box; }
+    body { margin: 0; }
+    header { background: #135c3c; color: #fff; padding: 22px max(20px, calc((100% - 1180px) / 2)); }
+    h1 { margin: 0; font-size: 26px; }
+    header p { margin: 6px 0 0; color: #dcefe4; }
+    main { max-width: 1180px; margin: auto; padding: 20px; }
+    section { background: #fff; border: 1px solid #d5e1d9; border-radius: 6px; padding: 18px; margin-bottom: 16px; }
+    h2 { margin: 0 0 14px; font-size: 18px; }
+    .grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+    .grid.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    label { display: grid; gap: 6px; font-size: 13px; font-weight: 700; }
+    input { min-height: 38px; width: 100%; border: 1px solid #adc1b3; border-radius: 4px; padding: 8px; font: inherit; }
+    input.input-error { border-color: #b42332; background: #fff1f2; outline: 2px solid #f8c6cc; }
+    .actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-top: 14px; }
+    button, .link-button { border: 1px solid #135c3c; border-radius: 4px; padding: 9px 13px; font: inherit; font-weight: 700; background: #135c3c; color: #fff; cursor: pointer; text-decoration: none; }
+    button.secondary, .link-button.secondary { background: #f1f6f2; color: #15482e; border-color: #b8cabb; }
+    button.danger { background: #a52834; border-color: #a52834; }
+    .hint { color: #4f6456; line-height: 1.45; }
+    .note { margin: 12px 0 0; padding: 10px 12px; border-left: 4px solid #d09120; background: #fff8e7; color: #5b481a; line-height: 1.45; }
+    .table-wrap { overflow-x: auto; }
+    table { min-width: 900px; width: 100%; border-collapse: collapse; font-size: 13px; }
+    th, td { padding: 9px; text-align: left; vertical-align: top; border-bottom: 1px solid #e0e9e3; }
+    th { color: #4b6355; font-size: 11px; text-transform: uppercase; }
+    .price-cell { display: flex; min-width: 175px; gap: 5px; }
+    .price-cell input { min-height: 32px; min-width: 75px; padding: 5px; }
+    .price-cell button { padding: 5px 8px; }
+    .tag { display: inline-block; border-radius: 3px; padding: 3px 6px; font-size: 11px; font-weight: 700; background: #e8eef0; color: #354b55; }
+    .tag.synced { background: #dff3e7; color: #0c5532; }
+    .tag.error, .tag.delete_error, .tag.invalid { background: #fae4e6; color: #8d1826; }
+    .empty { color: #6b7b70; }
+    #editor { display: none; }
+    #editor.visible { display: block; }
+    #activity-log { display: grid; gap: 7px; max-height: 260px; overflow: auto; }
+    .log-entry { padding: 9px 10px; border-left: 4px solid #7b8c81; background: #f5f8f6; line-height: 1.4; }
+    .log-entry.ok { border-color: #177245; background: #eaf7ee; }
+    .log-entry.error { border-color: #b42332; background: #fff0f1; }
+    @media (max-width: 720px) { main { padding: 14px; } section { padding: 14px; } .grid, .grid.two { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Набори Хорошоп</h1>
+    <p>Створення та керування наборами товарів.</p>
+  </header>
+  <main>
+    <section>
+      <h2>Доступ до API</h2>
+      <div class="grid">
+        <label>Логін API<input id="login" autocomplete="username"></label>
+        <label>Пароль API<input id="password" type="password" autocomplete="current-password"></label>
+        <label>Токен API<input id="token"><span class="hint">Можна вказати замість логіна та пароля.</span></label>
+      </div>
+    </section>
+
+    <section>
+      <h2>Створити набір вручну</h2>
+      <div class="grid">
+        <label>Артикул набору<input id="create-article"></label>
+        <label>Артикули відображення товарів<input id="create-products"><span class="hint">Щонайменше два артикули, розділені крапкою з комою.</span></label>
+        <label>Кінцева ціна<input id="create-price" inputmode="decimal"></label>
+      </div>
+      <div class="actions"><button id="create-set" type="button">Створити набір</button></div>
+    </section>
+
+    <section>
+      <h2>Масове створення та оновлення через Excel</h2>
+      <div class="grid">
+        <label>Excel-файл наборів<input id="file" type="file" accept=".xlsx,.xlsm"></label>
+        <div class="actions"><a class="link-button secondary" href="/api/template">Завантажити шаблон</a><a class="link-button secondary" href="/api/sets/export">Вивантажити реєстр</a></div>
+      </div>
+      <p class="hint">Шаблон містить лише три колонки: артикул набору, артикули товарів через <b>;</b> і кінцева ціна. У вивантаженому реєстрі є додаткова колонка <b>«Видалити (Так)»</b>: впишіть <b>Так</b> лише в рядках, які потрібно видалити. Порожня клітинка означає створення або оновлення набору.</p>
+      <div class="actions"><button class="secondary" id="preview" type="button">Перевірити Excel</button><button id="import" type="button">Виконати операції</button></div>
+    </section>
+
+    <section>
+      <h2>Результат останньої операції</h2>
+      <div class="table-wrap" id="result"><p class="empty">Ще немає результатів.</p></div>
+    </section>
+
+    <section>
+      <h2>Реєстр наборів</h2>
+      <p class="note">Тут показані набори, створені через цей сервіс. Хорошоп не надає масового експорту наборів, тому локальний реєстр зберігається окремо й не стирається під час оновлення сервера.</p>
+      <div class="actions"><button class="danger" id="delete-selected" type="button">Видалити вибрані</button><a class="link-button secondary" href="/api/sets/export">Завантажити таблицю реєстру</a></div>
+      <div class="table-wrap" id="state"><p class="empty">Завантаження реєстру...</p></div>
+    </section>
+
+    <section id="editor">
+      <h2>Редагування набору</h2>
+      <div class="grid two">
+        <label>Артикул набору<input id="edit-article" readonly></label>
+        <label>Кінцева ціна<input id="edit-price" inputmode="decimal"></label>
+        <label>Артикули відображення товарів<input id="edit-products"><span class="hint">Щонайменше два артикули, розділені крапкою з комою.</span></label>
+      </div>
+      <div class="actions"><button id="save-editor" type="button">Зберегти зміни</button><button class="secondary" id="cancel-editor" type="button">Закрити</button></div>
+    </section>
+
+    <section>
+      <h2>Журнал операцій</h2>
+      <div id="activity-log"><p class="empty">Операції ще не виконувалися.</p></div>
+    </section>
+  </main>
+  <script>
+    let registry = [];
+    const state = document.getElementById('state');
+    const result = document.getElementById('result');
+    const log = document.getElementById('activity-log');
+    const esc = value => String(value ?? '').replace(/[&<>"']/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
+    const credentials = () => ({login: document.getElementById('login').value.trim(), password: document.getElementById('password').value, token: document.getElementById('token').value.trim()});
+    function clearCredentialErrors() { ['login', 'password'].forEach(id => document.getElementById(id).classList.remove('input-error')); }
+    function validateCredentials() {
+      const data = credentials();
+      clearCredentialErrors();
+      if (data.token || (data.login && data.password)) return true;
+      if (!data.login) document.getElementById('login').classList.add('input-error');
+      if (!data.password) document.getElementById('password').classList.add('input-error');
+      setMessage('Вкажіть логін і пароль API або чинний токен.', 'error');
+      return false;
+    }
+    function setMessage(message, kind = '') { if (log.querySelector('.empty')) log.innerHTML = ''; const entry = document.createElement('div'); entry.className = `log-entry ${kind}`; entry.textContent = `${new Date().toLocaleTimeString()} — ${message}`; log.prepend(entry); }
+    async function readResponse(response) { const text = await response.text(); try { return JSON.parse(text); } catch { throw new Error(text || `Помилка сервера (${response.status}).`); } }
+    async function jsonApi(url, body) { const response = await fetch(url, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)}); const data = await readResponse(response); if (!response.ok) throw new Error(data.detail || 'Помилка сервера.'); return data; }
+    function statusText(status) { return ({ready:'готово', synced:'імпортовано', deleted:'видалено', invalid:'помилка', error:'помилка', delete_error:'помилка'})[status] || status; }
+    function actionText(action) { return action === 'delete' ? 'видалення' : 'створення / оновлення'; }
+    function renderResult(items) { if (!items.length) { result.innerHTML = '<p class="empty">У файлі немає операцій.</p>'; return; } result.innerHTML = `<table><thead><tr><th>Рядок</th><th>Операція</th><th>Набір</th><th>Товари</th><th>Ціна</th><th>Стан</th></tr></thead><tbody>${items.map(item => `<tr><td>${item.row_number}</td><td>${esc(actionText(item.action))}</td><td>${esc(item.article)}</td><td>${item.display_articles.map(esc).join('; ') || '-'}</td><td>${esc(item.discounted_price || '-')}</td><td><span class="tag ${esc(item.status)}">${esc(statusText(item.status))}</span>${item.message ? '<br>' + esc(item.message) : ''}</td></tr>`).join('')}</tbody></table>`; }
+    function renderState(data) { registry = data.sets || []; if (!registry.length) { state.innerHTML = '<p class="empty">У реєстрі поки немає наборів.</p>'; return; } state.innerHTML = `<table><thead><tr><th></th><th>Артикул</th><th>Товари</th><th>Кінцева ціна</th><th>Стан</th><th>Змінено</th><th></th></tr></thead><tbody>${registry.map(item => `<tr><td><input type="checkbox" data-select="${esc(item.article)}"></td><td>${esc(item.article)}</td><td>${(item.display_articles || []).map(esc).join('; ')}</td><td><div class="price-cell"><input data-price="${esc(item.article)}" value="${esc(item.discounted_price)}"><button class="secondary" data-save-price="${esc(item.article)}" type="button">Зберегти</button></div></td><td><span class="tag ${esc(item.status)}">${esc(statusText(item.status))}</span>${item.message ? '<br>' + esc(item.message) : ''}</td><td>${esc(item.updated_at)}</td><td><div class="actions"><button class="secondary" data-edit="${esc(item.article)}" type="button">Змінити</button><button class="danger" data-delete-one="${esc(item.article)}" type="button">Видалити</button></div></td></tr>`).join('')}</tbody></table>`; document.querySelectorAll('[data-edit]').forEach(button => button.addEventListener('click', () => openEditor(button.dataset.edit))); document.querySelectorAll('[data-save-price]').forEach(button => button.addEventListener('click', () => quickPrice(button.dataset.savePrice))); document.querySelectorAll('[data-delete-one]').forEach(button => button.addEventListener('click', () => deleteArticles([button.dataset.deleteOne]))); }
+    async function loadState() { try { const response = await fetch('/api/state'); const data = await readResponse(response); if (!response.ok) throw new Error(data.detail); renderState(data); } catch (error) { state.innerHTML = `<p class="empty">Не вдалося завантажити реєстр: ${esc(error.message)}</p>`; setMessage(error.message, 'error'); } }
+    function openEditor(article) { const item = registry.find(value => value.article === article); if (!item) return; document.getElementById('editor').classList.add('visible'); document.getElementById('edit-article').value = item.article; document.getElementById('edit-products').value = (item.display_articles || []).join('; '); document.getElementById('edit-price').value = item.discounted_price || ''; document.getElementById('editor').scrollIntoView({behavior: 'smooth', block: 'start'}); }
+    async function quickPrice(article) { if (!validateCredentials()) return; const price = document.querySelector(`[data-price="${CSS.escape(article)}"]`).value; try { setMessage('Збереження ціни...'); const data = await jsonApi('/api/sets/update', {...credentials(), article, discounted_price: price}); if (!data.success) throw new Error(data.message); setMessage('Ціну оновлено.', 'ok'); await loadState(); } catch (error) { handleApiError(error); } }
+    async function saveEditor() { if (!validateCredentials()) return; try { setMessage('Збереження набору...'); const data = await jsonApi('/api/sets/update', {...credentials(), article: document.getElementById('edit-article').value, display_articles: document.getElementById('edit-products').value, discounted_price: document.getElementById('edit-price').value}); if (!data.success) throw new Error(data.message); setMessage('Набір оновлено.', 'ok'); document.getElementById('editor').classList.remove('visible'); await loadState(); } catch (error) { handleApiError(error); } }
+    async function createSet() { if (!validateCredentials()) return; try { setMessage('Створення набору...'); const data = await jsonApi('/api/sets/create', {...credentials(), article: document.getElementById('create-article').value, display_articles: document.getElementById('create-products').value, discounted_price: document.getElementById('create-price').value}); if (!data.success) throw new Error(data.message); setMessage('Набір створено.', 'ok'); ['create-article', 'create-products', 'create-price'].forEach(id => document.getElementById(id).value = ''); await loadState(); } catch (error) { handleApiError(error); } }
+    async function deleteArticles(articles) { if (!validateCredentials()) return; if (!confirm(`Видалити наборів: ${articles.length}? Дію буде надіслано до Хорошоп.`)) return; try { setMessage('Видалення наборів...'); const data = await jsonApi('/api/sets/delete', {...credentials(), articles}); const failed = data.items.filter(item => !item.success); setMessage(failed.length ? `Видалення завершено з помилками: ${failed.map(item => item.article).join(', ')}` : 'Вибрані набори видалено.', failed.length ? 'error' : 'ok'); await loadState(); } catch (error) { handleApiError(error); } }
+    async function deleteSelected() { const articles = [...document.querySelectorAll('[data-select]:checked')].map(node => node.dataset.select); if (!articles.length) { setMessage('Виберіть набори для видалення.', 'error'); return; } deleteArticles(articles); }
+    async function fileAction(endpoint, importing) { const file = document.getElementById('file').files[0]; if (!file) { setMessage('Виберіть Excel-файл.', 'error'); return; } if (!validateCredentials()) return; const body = new FormData(); body.append('file', file); for (const [key, value] of Object.entries(credentials())) body.append(key, value); try { setMessage(importing ? 'Виконання операцій...' : 'Перевірка файлу...'); const response = await fetch(endpoint, {method: 'POST', body}); const data = await readResponse(response); if (!response.ok) throw new Error(data.detail || 'Помилка сервера.'); renderResult(data.items || []); setMessage(importing ? `Готово: успішно ${data.imported}, помилок ${data.errors}.` : `Готово до імпорту: ${data.ready}, помилок ${data.errors}.`, data.errors ? 'error' : 'ok'); if (importing) await loadState(); } catch (error) { handleApiError(error); } }
+    function handleApiError(error) { setMessage(error.message || 'Сталася помилка.', 'error'); }
+    document.getElementById('create-set').addEventListener('click', createSet);
+    document.getElementById('preview').addEventListener('click', () => fileAction('/api/preview', false));
+    document.getElementById('import').addEventListener('click', () => fileAction('/api/import', true));
+    document.getElementById('delete-selected').addEventListener('click', deleteSelected);
+    document.getElementById('save-editor').addEventListener('click', saveEditor);
+    document.getElementById('cancel-editor').addEventListener('click', () => document.getElementById('editor').classList.remove('visible'));
+    ['login', 'password', 'token'].forEach(id => document.getElementById(id).addEventListener('input', clearCredentialErrors));
+    loadState();
+  </script>
+</body>
+</html>
