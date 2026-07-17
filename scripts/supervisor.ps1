@@ -7,6 +7,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 $AppDir = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+$VenvDir = Join-Path $AppDir ".venv"
 $PythonExe = Join-Path $AppDir ".venv\Scripts\python.exe"
 $ServerScript = Join-Path $AppDir "sets_server.py"
 $LogsDir = Join-Path $AppDir "logs"
@@ -39,6 +40,30 @@ function Test-WorkerRunning {
     return $null -ne $script:Worker -and !$script:Worker.HasExited
 }
 
+function Ensure-PythonEnvironment {
+    if (Test-Path $PythonExe) { return }
+
+    Write-Log "Virtual environment is missing. Creating $VenvDir."
+    if (Get-Command py -ErrorAction SilentlyContinue) {
+        & py -3 -m venv $VenvDir
+    }
+    elseif (Get-Command python -ErrorAction SilentlyContinue) {
+        & python -m venv $VenvDir
+    }
+    else {
+        throw "Python 3 was not found. Install Python and rerun FULL_SERVER_INSTALL.ps1."
+    }
+    if ($LASTEXITCODE -ne 0 -or !(Test-Path $PythonExe)) {
+        throw "Could not create virtual environment: $VenvDir"
+    }
+
+    & $PythonExe -m pip install -r (Join-Path $AppDir "requirements.txt")
+    if ($LASTEXITCODE -ne 0) {
+        throw "Could not install Python dependencies into $VenvDir"
+    }
+    Write-Log "Virtual environment and dependencies were created."
+}
+
 function Restore-WorkerFromPidFile {
     if (!(Test-Path $PidFile)) { return }
 
@@ -58,7 +83,7 @@ function Restore-WorkerFromPidFile {
 
 function Start-Worker {
     if (Test-WorkerRunning) { return }
-    if (!(Test-Path $PythonExe)) { throw "Virtual environment Python was not found: $PythonExe" }
+    Ensure-PythonEnvironment
     if (!(Test-Path $ServerScript)) { throw "Server file was not found: $ServerScript" }
 
     New-Item -ItemType Directory -Path $LogsDir -Force | Out-Null

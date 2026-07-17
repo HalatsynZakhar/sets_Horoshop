@@ -93,10 +93,16 @@ try {
     }
 
     Set-Location $InstallDir
+    $venvDir = Join-Path $InstallDir ".venv"
     $venvPython = Join-Path $InstallDir ".venv\Scripts\python.exe"
     if (!(Test-Path $venvPython)) {
         $python = Get-PythonCommand
-        & $python[0] $python[1] -m venv .venv
+        if ($python.Count -eq 2) {
+            & $python[0] $python[1] -m venv $venvDir
+        }
+        else {
+            & $python[0] -m venv $venvDir
+        }
         if ($LASTEXITCODE -ne 0) { throw "Could not create virtual environment." }
     }
     & $venvPython -m pip install --upgrade pip
