@@ -140,9 +140,29 @@ function Initialize-Configuration {
     return $config
 }
 
+function Get-PublicLogFile {
+    param([object]$Config)
+
+    $defaultLog = Join-Path $InstallDir "logs\horoshop_sets.log"
+    $pathValue = [string]$Config.logging.public_log_path
+    $name = [string]$Config.logging.public_log_name
+    if ([string]::IsNullOrWhiteSpace($pathValue)) { return $defaultLog }
+    if ([string]::IsNullOrWhiteSpace($name)) { $name = "horoshop_sets.log" }
+    if ([System.IO.Path]::GetFileName($name) -ne $name) { return $defaultLog }
+    $directory = if ([System.IO.Path]::IsPathRooted($pathValue)) {
+        $pathValue
+    }
+    else {
+        Join-Path $InstallDir $pathValue
+    }
+    return Join-Path $directory $name
+}
+
 function Start-AndVerifyService {
+    param([string]$PublicLogFile)
+
     $pidFile = Join-Path $InstallDir "logs\horoshop_sets.pid"
-    $supervisorLog = Join-Path $InstallDir "logs\supervisor.log"
+    $supervisorLog = $PublicLogFile
     Remove-Item -LiteralPath $pidFile -Force -ErrorAction SilentlyContinue
     Invoke-TaskCommand -Arguments @("/Run", "/TN", $TaskName)
     $deadline = (Get-Date).AddSeconds(90)
@@ -157,7 +177,16 @@ function Start-AndVerifyService {
             return
         }
     }
-    $details = if (Test-Path $supervisorLog) { (Get-Content $supervisorLog -Tail 20) -join "`n" } else { "Supervisor log is empty." }
+    $fallbackSupervisorLog = Join-Path $InstallDir "logs\supervisor.log"
+    $details = if (Test-Path $supervisorLog) {
+        (Get-Content $supervisorLog -Tail 20) -join "`n"
+    }
+    elseif (Test-Path $fallbackSupervisorLog) {
+        (Get-Content $fallbackSupervisorLog -Tail 20) -join "`n"
+    }
+    else {
+        "Supervisor log is empty."
+    }
     throw "The scheduled task did not keep the web server running. See $supervisorLog`n$details"
 }
 
@@ -234,6 +263,7 @@ try {
     Grant-ProjectAccess
 
     $config = Initialize-Configuration
+    $publicLogFile = Get-PublicLogFile -Config $config
 
     Set-Location $InstallDir
     $venvDir = Join-Path $InstallDir ".venv"
@@ -268,9 +298,10 @@ try {
     if ((Get-ScheduledTask -TaskName $TaskName).Settings.ExecutionTimeLimit -ne "PT0S") {
         throw "Could not disable the scheduled task execution limit."
     }
-    Start-AndVerifyService
+    Start-AndVerifyService -PublicLogFile $publicLogFile
 
     Write-Host "Installation completed. Web panel: http://<server>:$port" -ForegroundColor Green
+    Write-Host "Public service log: $publicLogFile" -ForegroundColor Green
     Write-Host "Installer log: $InstallLog" -ForegroundColor Green
 }
 catch {

@@ -195,12 +195,13 @@ class HoroshopSetsTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             config_path = Path(directory) / "config.json"
             config_path.write_text(
-                '{"server":{"port":8093},"horoshop":{"domain":"https://shop.example.com","title":"Вместе дешевле"}}',
+                '{"server":{"port":8093},"horoshop":{"domain":"https://shop.example.com","title":"Вместе дешевле"},"logging":{"public_log_path":"public-logs","public_log_name":"visible.log"}}',
                 encoding="utf-8-sig",
             )
             settings = load_settings(config_path)
         self.assertEqual(settings.domain, "https://shop.example.com")
         self.assertEqual(settings.title, "Разом дешевше")
+        self.assertEqual(settings.public_log_file, config_path.parent / "public-logs" / "visible.log")
 
 
 if __name__ == "__main__":

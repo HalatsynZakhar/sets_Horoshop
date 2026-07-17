@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import shutil
+import sys
 import threading
 from dataclasses import replace
 from decimal import Decimal
@@ -45,6 +46,66 @@ settings: Settings | None = None
 state_store: StateStore | None = None
 state_lock = threading.Lock()
 logger = logging.getLogger(__name__)
+service_output_stream: "PublicLogStream | None" = None
+
+
+class PublicLogStream:
+    def __init__(self, path: Path, fallback_path: Path) -> None:
+        self.path = path
+        self.fallback_path = fallback_path
+        self.encoding = "utf-8"
+
+    def write(self, message: str) -> int:
+        if not message:
+            return 0
+        try:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            with self.path.open("a", encoding=self.encoding) as file:
+                file.write(message)
+        except OSError:
+            try:
+                self.fallback_path.parent.mkdir(parents=True, exist_ok=True)
+                with self.fallback_path.open("a", encoding=self.encoding) as file:
+                    file.write(message)
+            except OSError:
+                pass
+        return len(message)
+
+    def flush(self) -> None:
+        return None
+
+    def isatty(self) -> bool:
+        return False
+
+
+def configure_service_output(runtime_settings: Settings) -> None:
+    global service_output_stream
+
+    requested_path = runtime_settings.public_log_file
+    fallback_path = PROJECT_DIR / "logs" / "horoshop_sets.log"
+    selected_path = requested_path
+    fallback_message = ""
+    try:
+        selected_path.parent.mkdir(parents=True, exist_ok=True)
+        selected_path.touch(exist_ok=True)
+    except OSError as error:
+        selected_path = fallback_path
+        selected_path.parent.mkdir(parents=True, exist_ok=True)
+        selected_path.touch(exist_ok=True)
+        fallback_message = f"Public log path was unavailable ({requested_path}): {error}. Using {selected_path}."
+
+    service_output_stream = PublicLogStream(selected_path, fallback_path)
+    sys.stdout = service_output_stream
+    sys.stderr = service_output_stream
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        stream=service_output_stream,
+        force=True,
+    )
+    if fallback_message:
+        logger.warning(fallback_message)
+    logger.info("Service output is writing to %s", selected_path)
 
 
 def get_runtime() -> tuple[Settings, StateStore]:
@@ -670,8 +731,13 @@ async def import_sets(request: Request) -> dict[str, Any]:
         raise HTTPException(status_code=400, detail=str(error)) from error
 
 
-if __name__ == "__main__":
+def run_server() -> None:
     import uvicorn
 
     runtime_settings, _ = get_runtime()
+    configure_service_output(runtime_settings)
     uvicorn.run(app, host=runtime_settings.host, port=runtime_settings.port)
+
+
+if __name__ == "__main__":
+    run_server()

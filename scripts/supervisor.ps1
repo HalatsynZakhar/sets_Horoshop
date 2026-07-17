@@ -11,8 +11,9 @@ $VenvDir = Join-Path $AppDir ".venv"
 $PythonExe = Join-Path $AppDir ".venv\Scripts\python.exe"
 $ServerScript = Join-Path $AppDir "sets_server.py"
 $LogsDir = Join-Path $AppDir "logs"
+$ConfigFile = Join-Path $AppDir "config.json"
 $PidFile = Join-Path $LogsDir "horoshop_sets.pid"
-$SupervisorLog = Join-Path $LogsDir "supervisor.log"
+$FallbackSupervisorLog = Join-Path $LogsDir "supervisor.log"
 $WorkerOutputLog = Join-Path $LogsDir "server-output.log"
 $WorkerErrorLog = Join-Path $LogsDir "server-error.log"
 $Worker = $null
@@ -22,17 +23,50 @@ $machinePath = [Environment]::GetEnvironmentVariable("Path", "Machine")
 $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
 $env:Path = "$machinePath;$userPath"
 
+function Get-PublicLogFile {
+    $defaultLog = Join-Path $LogsDir "horoshop_sets.log"
+    if (!(Test-Path $ConfigFile)) { return $defaultLog }
+    try {
+        $config = Get-Content -LiteralPath $ConfigFile -Raw -Encoding UTF8 | ConvertFrom-Json
+        $pathValue = [string]$config.logging.public_log_path
+        $name = [string]$config.logging.public_log_name
+        if ([string]::IsNullOrWhiteSpace($pathValue)) { return $defaultLog }
+        if ([string]::IsNullOrWhiteSpace($name)) { $name = "horoshop_sets.log" }
+        if ([System.IO.Path]::GetFileName($name) -ne $name) { return $defaultLog }
+        $directory = if ([System.IO.Path]::IsPathRooted($pathValue)) {
+            $pathValue
+        }
+        else {
+            Join-Path $AppDir $pathValue
+        }
+        return Join-Path $directory $name
+    }
+    catch {
+        return $defaultLog
+    }
+}
+
+$SupervisorLog = Get-PublicLogFile
+
 function Write-Log {
     param([string]$Message)
 
-    New-Item -ItemType Directory -Path $LogsDir -Force | Out-Null
     $Line = "[{0:yyyy-MM-ddTHH:mm:ssK}] {1}" -f (Get-Date), $Message
-    Add-Content -LiteralPath $SupervisorLog -Value $Line -Encoding UTF8
+    $activeLog = $SupervisorLog
+    try {
+        New-Item -ItemType Directory -Path (Split-Path $activeLog -Parent) -Force | Out-Null
+        Add-Content -LiteralPath $activeLog -Value $Line -Encoding UTF8
+    }
+    catch {
+        $activeLog = $FallbackSupervisorLog
+        New-Item -ItemType Directory -Path $LogsDir -Force | Out-Null
+        Add-Content -LiteralPath $activeLog -Value $Line -Encoding UTF8
+    }
     Write-Output $Line
 
-    if ((Test-Path $SupervisorLog) -and (Get-Item $SupervisorLog).Length -gt 2MB) {
-        Get-Content -LiteralPath $SupervisorLog -Tail 1000 |
-            Set-Content -LiteralPath $SupervisorLog -Encoding UTF8
+    if ((Test-Path $activeLog) -and (Get-Item $activeLog).Length -gt 2MB) {
+        Get-Content -LiteralPath $activeLog -Tail 1000 |
+            Set-Content -LiteralPath $activeLog -Encoding UTF8
     }
 }
 

@@ -8,5 +8,9 @@
     "domain": "https://your-shop.example.com",
     "currency": "UAH",
     "batch_size": 50
+  },
+  "logging": {
+    "public_log_path": "C:\\ShareFiles\\public",
+    "public_log_name": "horoshop_sets.log"
   }
 }

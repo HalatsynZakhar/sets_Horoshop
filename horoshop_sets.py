@@ -34,6 +34,12 @@ class Settings:
     batch_size: int
     request_timeout_seconds: int
     state_file: Path
+    public_log_path: Path = Path("logs")
+    public_log_name: str = "horoshop_sets.log"
+
+    @property
+    def public_log_file(self) -> Path:
+        return self.public_log_path / self.public_log_name
 
 
 @dataclass(frozen=True)
@@ -103,8 +109,9 @@ def load_settings(config_file: Path) -> Settings:
 
     horoshop = raw.get("horoshop") or {}
     server = raw.get("server") or {}
-    if not isinstance(horoshop, dict) or not isinstance(server, dict):
-        raise ValueError("Sections horoshop and server must contain objects.")
+    logging_config = raw.get("logging") or {}
+    if not isinstance(horoshop, dict) or not isinstance(server, dict) or not isinstance(logging_config, dict):
+        raise ValueError("Sections horoshop, server and logging must contain objects.")
 
     domain = normalize(horoshop.get("domain"))
     if not domain:
@@ -117,6 +124,12 @@ def load_settings(config_file: Path) -> Settings:
     state_file = Path(state_value)
     if not state_file.is_absolute():
         state_file = config_file.parent / state_file
+    public_log_path = Path(normalize(logging_config.get("public_log_path", "logs")) or "logs")
+    if not public_log_path.is_absolute():
+        public_log_path = config_file.parent / public_log_path
+    public_log_name = normalize(logging_config.get("public_log_name", "horoshop_sets.log")) or "horoshop_sets.log"
+    if Path(public_log_name).name != public_log_name:
+        raise ValueError("logging.public_log_name must be a file name without a path.")
     title = SET_TITLE
 
     return Settings(
@@ -130,6 +143,8 @@ def load_settings(config_file: Path) -> Settings:
             1, int(horoshop.get("request_timeout_seconds", 60))
         ),
         state_file=state_file,
+        public_log_path=public_log_path,
+        public_log_name=public_log_name,
     )
 
 
