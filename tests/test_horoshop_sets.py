@@ -172,13 +172,14 @@ class HoroshopSetsTests(unittest.TestCase):
             host="0.0.0.0",
             port=8093,
             currency="UAH",
-            title="Вместе дешевле",
+            title="Разом дешевше",
             batch_size=50,
             request_timeout_seconds=60,
             state_file=Path("state.json"),
         )
         payload = import_payload([item], settings)
         self.assertEqual(payload[0]["discountedPrice"], 10.5)
+        self.assertEqual(payload[0]["title"], "Разом дешевше")
         self.assertNotIn("initialPrice", payload[0])
         self.assertEqual(
             import_results(
@@ -191,11 +192,12 @@ class HoroshopSetsTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             config_path = Path(directory) / "config.json"
             config_path.write_text(
-                '{"server":{"port":8093},"horoshop":{"domain":"https://shop.example.com"}}',
+                '{"server":{"port":8093},"horoshop":{"domain":"https://shop.example.com","title":"Вместе дешевле"}}',
                 encoding="utf-8-sig",
             )
             settings = load_settings(config_path)
         self.assertEqual(settings.domain, "https://shop.example.com")
+        self.assertEqual(settings.title, "Разом дешевше")
 
 
 if __name__ == "__main__":

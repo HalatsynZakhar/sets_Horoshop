@@ -7,7 +7,6 @@
   "horoshop": {
     "domain": "https://your-shop.example.com",
     "currency": "UAH",
-    "title": "Вместе дешевле",
     "batch_size": 50
   }
 }

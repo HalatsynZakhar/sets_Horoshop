@@ -19,6 +19,7 @@ from horoshop_sets import (
     HoroshopSetsError,
     PlanItem,
     SetRow,
+    SET_TITLE,
     Settings,
     StateStore,
     build_excel_template,
@@ -227,7 +228,7 @@ def editor_plan(data: dict[str, Any], credentials: Credentials) -> tuple[PlanIte
         raise HoroshopSetsError("У наборі має бути щонайменше два товари.")
 
     price = parse_price(data.get("discounted_price", existing.get("discounted_price", "")))
-    title = normalize(existing.get("title")) or runtime_settings.title
+    title = SET_TITLE
     enabled = bool(existing.get("enabled", True))
     currency = normalize(existing.get("currency")) or runtime_settings.currency
 

@@ -17,6 +17,7 @@ from openpyxl.styles import Alignment, Font, PatternFill
 
 
 DEFAULT_EXPORT_LIMIT = 500
+SET_TITLE = "Разом дешевше"
 
 
 class HoroshopSetsError(RuntimeError):
@@ -116,9 +117,7 @@ def load_settings(config_file: Path) -> Settings:
     state_file = Path(state_value)
     if not state_file.is_absolute():
         state_file = config_file.parent / state_file
-    title = normalize(horoshop.get("title", "Вместе дешевле")) or "Вместе дешевле"
-    if title == "Разом дешевше":
-        title = "Вместе дешевле"
+    title = SET_TITLE
 
     return Settings(
         domain=domain.rstrip("/"),
@@ -417,7 +416,7 @@ def import_payload(items: list[PlanItem], settings: Settings) -> list[dict[str, 
             continue
         value: dict[str, Any] = {
             "article": item.article,
-            "title": item.title or settings.title,
+            "title": SET_TITLE,
             "discountedPrice": float(item.discounted_price or Decimal("0")),
             "currency": item.currency or settings.currency,
             "enabled": item.enabled,
@@ -657,7 +656,7 @@ class StateStore:
             "display_articles": list(item.display_articles),
             "products": list(item.products),
             "discounted_price": str(item.discounted_price or ""),
-            "title": item.title or existing.get("title", "Вместе дешевле"),
+            "title": SET_TITLE,
             "currency": item.currency or existing.get("currency", "UAH"),
             "enabled": item.enabled,
             "sort_order": item.sort_order,
