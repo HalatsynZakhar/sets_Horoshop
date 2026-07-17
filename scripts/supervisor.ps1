@@ -68,17 +68,50 @@ function Ensure-PythonEnvironment {
     Write-Log "Virtual environment and dependencies were created."
 }
 
-function Refresh-ProjectDependencies {
+function Test-UpdatedProject {
+    param([bool]$RequirementsChanged)
+
     Ensure-PythonEnvironment
-    & $PythonExe -m pip install -r (Join-Path $AppDir "requirements.txt")
-    if ($LASTEXITCODE -ne 0) {
-        throw "Could not install dependencies after updating the project."
+    if ($RequirementsChanged) {
+        Write-Log "requirements.txt changed. Updating packages in the existing virtual environment."
+        & $PythonExe -m pip install --disable-pip-version-check -r (Join-Path $AppDir "requirements.txt")
+        if ($LASTEXITCODE -ne 0) {
+            throw "Could not update Python dependencies after updating the project."
+        }
     }
     & $PythonExe -m py_compile $ServerScript (Join-Path $AppDir "horoshop_sets.py")
     if ($LASTEXITCODE -ne 0) {
         throw "Python syntax check failed after updating the project."
     }
-    Write-Log "Dependencies and application files were refreshed successfully."
+    Write-Log "Updated application files were verified successfully."
+}
+
+function Backup-LocalData {
+    $backupDir = Join-Path ([System.IO.Path]::GetTempPath()) ("HoroshopSets-update-" + [Guid]::NewGuid().ToString("N"))
+    New-Item -ItemType Directory -Path $backupDir -Force | Out-Null
+
+    foreach ($relativePath in @("config.json", "data\sets_state.json")) {
+        $source = Join-Path $AppDir $relativePath
+        if (Test-Path $source) {
+            $target = Join-Path $backupDir $relativePath
+            New-Item -ItemType Directory -Path (Split-Path $target -Parent) -Force | Out-Null
+            Copy-Item -LiteralPath $source -Destination $target -Force
+        }
+    }
+    return $backupDir
+}
+
+function Restore-LocalData {
+    param([string]$BackupDir)
+
+    foreach ($relativePath in @("config.json", "data\sets_state.json")) {
+        $source = Join-Path $BackupDir $relativePath
+        if (Test-Path $source) {
+            $target = Join-Path $AppDir $relativePath
+            New-Item -ItemType Directory -Path (Split-Path $target -Parent) -Force | Out-Null
+            Copy-Item -LiteralPath $source -Destination $target -Force
+        }
+    }
 }
 
 function Restore-WorkerFromPidFile {
@@ -149,13 +182,46 @@ function Update-ProjectIfNeeded {
     if ($local -eq $remote) { return $false }
 
     Write-Log "Update found. Stopping service and rebuilding deployment from origin/$Branch."
-    Stop-Worker
-    git -C $AppDir reset --hard "origin/$Branch"
-    if ($LASTEXITCODE -ne 0) { throw "Git hard reset failed." }
-    git -C $AppDir clean -fd
-    if ($LASTEXITCODE -ne 0) { throw "Could not clean untracked deployment files." }
-    Refresh-ProjectDependencies
-    return $true
+    $backupDir = $null
+    $requirementsChanged = $false
+    try {
+        git -C $AppDir diff --quiet $local "origin/$Branch" -- requirements.txt
+        $requirementsChanged = $LASTEXITCODE -ne 0
+        Stop-Worker
+        $backupDir = Backup-LocalData
+        git -C $AppDir reset --hard "origin/$Branch"
+        if ($LASTEXITCODE -ne 0) { throw "Git hard reset failed." }
+        git -C $AppDir clean -fd
+        if ($LASTEXITCODE -ne 0) { throw "Could not clean untracked deployment files." }
+        Restore-LocalData $backupDir
+        Test-UpdatedProject $requirementsChanged
+        Write-Log "Update completed. The web server will be started from the new revision."
+        return $true
+    }
+    catch {
+        $failure = $_.Exception.Message
+        Write-Log "Update failed: $failure. Restoring revision $local."
+        try {
+            git -C $AppDir reset --hard $local
+            if ($LASTEXITCODE -ne 0) { throw "Git rollback failed." }
+            git -C $AppDir clean -fd
+            if ($LASTEXITCODE -ne 0) { throw "Could not clean files during rollback." }
+            if ($backupDir) { Restore-LocalData $backupDir }
+            Ensure-PythonEnvironment
+            & $PythonExe -m py_compile $ServerScript (Join-Path $AppDir "horoshop_sets.py")
+            if ($LASTEXITCODE -ne 0) { throw "Python syntax check failed after rollback." }
+            Write-Log "Previous revision was restored. The web server will be started again."
+        }
+        catch {
+            throw "Update failed: $failure Rollback also failed: $($_.Exception.Message)"
+        }
+        throw "Update failed: $failure Previous revision was restored."
+    }
+    finally {
+        if ($backupDir -and (Test-Path $backupDir)) {
+            Remove-Item -LiteralPath $backupDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
 }
 
 if (!(Get-Command git -ErrorAction SilentlyContinue)) { throw "Git was not found in PATH." }
@@ -167,13 +233,21 @@ try {
     while ($true) {
         try {
             if (Update-ProjectIfNeeded) {
-                Write-Log "Update completed. Restarting supervisor to load its new version."
-                exit 75
+                Write-Log "Updated deployment is active. The supervisor stays running."
             }
             Start-Worker
         }
         catch {
             Write-Log "Supervisor error: $($_.Exception.Message)"
+            try {
+                if (!(Test-WorkerRunning)) {
+                    Write-Log "Attempting to start the last verified web server after an error."
+                    Start-Worker
+                }
+            }
+            catch {
+                Write-Log "Recovery start failed: $($_.Exception.Message)"
+            }
         }
         Start-Sleep -Seconds 10
     }
