@@ -1,0 +1,121 @@
+from __future__ import annotations
+
+import io
+import tempfile
+import unittest
+from decimal import Decimal
+from pathlib import Path
+
+from openpyxl import Workbook, load_workbook
+
+from horoshop_sets import (
+    CatalogIndex,
+    PlanItem,
+    SetRow,
+    Settings,
+    StateStore,
+    build_excel_template,
+    import_payload,
+    import_results,
+    parse_excel_sets,
+    prepare_plan,
+)
+
+
+class HoroshopSetsTests(unittest.TestCase):
+    def excel_bytes(self, rows: list[tuple[object, object, object]]) -> bytes:
+        workbook = Workbook()
+        worksheet = workbook.active
+        for row in rows:
+            worksheet.append(row)
+        output = io.BytesIO()
+        workbook.save(output)
+        workbook.close()
+        return output.getvalue()
+
+    def test_template_has_expected_columns(self) -> None:
+        workbook = load_workbook(io.BytesIO(build_excel_template()), read_only=True)
+        self.assertEqual(
+            [cell.value for cell in next(workbook.active.iter_rows(max_row=1))],
+            ["Артикул набору", "Артикули товарів", "Ціна набору"],
+        )
+        self.assertEqual(workbook.active["A2"].number_format, "@")
+        workbook.close()
+
+    def test_excel_parses_price_and_articles(self) -> None:
+        rows = parse_excel_sets(
+            self.excel_bytes(
+                [
+                    ("Артикул набору", "Артикули товарів", "Ціна набору"),
+                    ("SET-1", "show-a; SHOW-B", "199,50"),
+                ]
+            )
+        )
+        self.assertEqual(rows, [SetRow("SET-1", ("show-a", "SHOW-B"), Decimal("199.50"), 2)])
+
+    def test_catalog_resolution_prefers_exact_then_case_insensitive(self) -> None:
+        catalog = CatalogIndex.from_raw(
+            [
+                {"article": "REAL-A", "article_for_display": "Display-A"},
+                {"article": "REAL-B", "article_for_display": "DISPLAY-B"},
+            ]
+        )
+        plan = prepare_plan(
+            [SetRow("SET-1", ("Display-A", "display-b"), Decimal("12.00"), 2)],
+            catalog,
+        )
+        self.assertTrue(plan[0].ready)
+        self.assertEqual(plan[0].products, ("REAL-A", "REAL-B"))
+
+    def test_ambiguous_display_article_and_product_article_collision_are_blocked(self) -> None:
+        catalog = CatalogIndex.from_raw(
+            [
+                {"article": "PRODUCT-1", "article_for_display": "Same"},
+                {"article": "PRODUCT-2", "article_for_display": "same"},
+            ]
+        )
+        plan = prepare_plan(
+            [
+                SetRow("SET-1", ("sAmE", "other"), Decimal("12.00"), 2),
+                SetRow("PRODUCT-1", ("Same", "other"), Decimal("12.00"), 3),
+            ],
+            catalog,
+        )
+        self.assertIn("не є унікальним", plan[0].error)
+        self.assertIn("збігається", plan[1].error)
+
+    def test_state_records_composition(self) -> None:
+        item = PlanItem("SET-1", ("A", "B"), Decimal("10.00"), ("REAL-A", "REAL-B"), 2)
+        with tempfile.TemporaryDirectory() as directory:
+            store = StateStore(Path(directory) / "state.json")
+            store.record(item, "synced", "Imported")
+            store.save()
+            reloaded = StateStore(Path(directory) / "state.json")
+        self.assertEqual(reloaded.snapshot()[0]["products"], ["REAL-A", "REAL-B"])
+        self.assertEqual(reloaded.snapshot()[0]["status"], "synced")
+
+    def test_payload_and_api_log_use_discounted_price_only(self) -> None:
+        item = PlanItem("SET-1", ("A", "B"), Decimal("10.50"), ("REAL-A", "REAL-B"), 2)
+        settings = Settings(
+            domain="https://shop.example.com",
+            host="0.0.0.0",
+            port=8093,
+            currency="UAH",
+            title="Разом дешевше",
+            batch_size=50,
+            request_timeout_seconds=60,
+            state_file=Path("state.json"),
+        )
+        payload = import_payload([item], settings)
+        self.assertEqual(payload[0]["discountedPrice"], 10.5)
+        self.assertNotIn("initialPrice", payload[0])
+        self.assertEqual(
+            import_results(
+                {"status": "WARNING", "response": {"log": [{"article": "SET-1", "info": [{"code": 0, "message": "Imported"}]}]}}
+            )["SET-1"],
+            (True, "Imported"),
+        )
+
+
+if __name__ == "__main__":
+    unittest.main()
