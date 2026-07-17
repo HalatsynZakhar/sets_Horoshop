@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import json
 import os
+import shutil
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
@@ -45,8 +46,14 @@ class Credentials:
 class SetRow:
     article: str
     display_articles: tuple[str, ...]
-    discounted_price: Decimal
+    discounted_price: Decimal | None
     row_number: int
+    action: str = "upsert"
+    title: str = ""
+    enabled: bool = True
+    sort_order: int | None = None
+    discount_percent: int | None = None
+    currency: str = ""
 
 
 @dataclass(frozen=True)
@@ -63,6 +70,12 @@ class PlanItem:
     products: tuple[str, ...]
     row_number: int
     error: str = ""
+    action: str = "upsert"
+    title: str = ""
+    enabled: bool = True
+    sort_order: int | None = None
+    discount_percent: int | None = None
+    currency: str = ""
 
     @property
     def ready(self) -> bool:
@@ -74,7 +87,7 @@ def utc_now() -> str:
 
 
 def normalize(value: Any) -> str:
-    return str(value or "").strip()
+    return "" if value is None else str(value).strip()
 
 
 def endpoint_url(domain: str, endpoint: str) -> str:
@@ -103,13 +116,16 @@ def load_settings(config_file: Path) -> Settings:
     state_file = Path(state_value)
     if not state_file.is_absolute():
         state_file = config_file.parent / state_file
+    title = normalize(horoshop.get("title", "Вместе дешевле")) or "Вместе дешевле"
+    if title == "Разом дешевше":
+        title = "Вместе дешевле"
 
     return Settings(
         domain=domain.rstrip("/"),
         host=normalize(server.get("host", "0.0.0.0")) or "0.0.0.0",
         port=max(1, min(65535, int(server.get("port", 8093)))),
         currency=currency,
-        title=normalize(horoshop.get("title", "Разом дешевше")) or "Разом дешевше",
+        title=title,
         batch_size=max(1, int(horoshop.get("batch_size", 50))),
         request_timeout_seconds=max(
             1, int(horoshop.get("request_timeout_seconds", 60))
@@ -138,6 +154,52 @@ def split_display_articles(value: Any) -> tuple[str, ...]:
     return values
 
 
+def parse_action(value: Any) -> str:
+    action = normalize(value).casefold()
+    aliases = {
+        "": "upsert",
+        "обновить": "upsert",
+        "создать": "upsert",
+        "update": "upsert",
+        "upsert": "upsert",
+        "удалить": "delete",
+        "delete": "delete",
+        "принять на учет": "register",
+        "принять на учёт": "register",
+        "учет": "register",
+        "учёт": "register",
+        "register": "register",
+    }
+    if action not in aliases:
+        raise ValueError("действие должно быть: обновить, удалить или принять на учет.")
+    return aliases[action]
+
+
+def parse_bool(value: Any, default: bool = True) -> bool:
+    text = normalize(value).casefold()
+    if not text:
+        return default
+    if text in {"да", "true", "1", "yes", "y"}:
+        return True
+    if text in {"нет", "false", "0", "no", "n"}:
+        return False
+    raise ValueError("значение активности должно быть Да или Нет.")
+
+
+def parse_optional_int(value: Any, label: str, minimum: int, maximum: int | None = None) -> int | None:
+    text = normalize(value)
+    if not text:
+        return None
+    try:
+        parsed = int(text)
+    except ValueError as error:
+        raise ValueError(f"{label} должно быть целым числом.") from error
+    if parsed < minimum or (maximum is not None and parsed > maximum):
+        limits = f"от {minimum} до {maximum}" if maximum is not None else f"не меньше {minimum}"
+        raise ValueError(f"{label} должно быть {limits}.")
+    return parsed
+
+
 def parse_excel_sets(data: bytes) -> list[SetRow]:
     workbook = load_workbook(io.BytesIO(data), read_only=True, data_only=True)
     try:
@@ -145,7 +207,7 @@ def parse_excel_sets(data: bytes) -> list[SetRow]:
         rows: list[SetRow] = []
         seen_articles: set[str] = set()
         for row_number, row in enumerate(worksheet.iter_rows(values_only=True), start=1):
-            if not row or all(value is None for value in row[:3]):
+            if not row or all(value is None for value in row[:9]):
                 continue
             article = normalize(row[0] if len(row) > 0 else "")
             if article.casefold() in {"article", "артикул", "артикул набору", "артикул набора"}:
@@ -157,11 +219,35 @@ def parse_excel_sets(data: bytes) -> list[SetRow]:
                 raise ValueError(f"Рядок {row_number}: артикул набору '{article}' повторюється.")
             seen_articles.add(key)
             try:
+                action = parse_action(row[3] if len(row) > 3 else "")
+                if action == "delete":
+                    rows.append(SetRow(article, (), None, row_number, action=action))
+                    continue
                 display_articles = split_display_articles(row[1] if len(row) > 1 else "")
                 price = parse_price(row[2] if len(row) > 2 else "")
+                title = normalize(row[4] if len(row) > 4 else "")
+                enabled = parse_bool(row[5] if len(row) > 5 else "", default=True)
+                sort_order = parse_optional_int(row[6] if len(row) > 6 else "", "порядок сортировки", 0)
+                discount_percent = parse_optional_int(row[7] if len(row) > 7 else "", "скидка", 0, 100)
+                currency = normalize(row[8] if len(row) > 8 else "").upper()
+                if currency and len(currency) != 3:
+                    raise ValueError("валюта должна состоять из трех букв.")
             except ValueError as error:
                 raise ValueError(f"Рядок {row_number}: {error}") from error
-            rows.append(SetRow(article, display_articles, price, row_number))
+            rows.append(
+                SetRow(
+                    article,
+                    display_articles,
+                    price,
+                    row_number,
+                    action=action,
+                    title=title,
+                    enabled=enabled,
+                    sort_order=sort_order,
+                    discount_percent=discount_percent,
+                    currency=currency,
+                )
+            )
         if not rows:
             raise ValueError("Excel не містить жодного набору.")
         return rows
@@ -172,13 +258,31 @@ def parse_excel_sets(data: bytes) -> list[SetRow]:
 def build_excel_template() -> bytes:
     workbook = Workbook()
     worksheet = workbook.active
-    worksheet.title = "Набори"
-    worksheet.append(["Артикул набору", "Артикули товарів", "Ціна набору"])
+    worksheet.title = "Наборы"
+    worksheet.append(
+        [
+            "Артикул набора",
+            "Артикулы отображения товаров",
+            "Цена набора",
+            "Действие",
+            "Название",
+            "Активен",
+            "Порядок сортировки",
+            "Скидка %",
+            "Валюта",
+        ]
+    )
     worksheet.freeze_panes = "A2"
-    worksheet.auto_filter.ref = "A1:C1"
+    worksheet.auto_filter.ref = "A1:I1"
     worksheet.column_dimensions["A"].width = 28
     worksheet.column_dimensions["B"].width = 58
     worksheet.column_dimensions["C"].width = 18
+    worksheet.column_dimensions["D"].width = 20
+    worksheet.column_dimensions["E"].width = 28
+    worksheet.column_dimensions["F"].width = 12
+    worksheet.column_dimensions["G"].width = 20
+    worksheet.column_dimensions["H"].width = 14
+    worksheet.column_dimensions["I"].width = 12
 
     header_fill = PatternFill("solid", fgColor="166534")
     for cell in worksheet[1]:
@@ -243,6 +347,18 @@ class CatalogIndex:
 def prepare_plan(rows: list[SetRow], catalog: CatalogIndex) -> list[PlanItem]:
     plan: list[PlanItem] = []
     for row in rows:
+        if row.action == "delete":
+            plan.append(
+                PlanItem(
+                    article=row.article,
+                    display_articles=(),
+                    discounted_price=None,
+                    products=(),
+                    row_number=row.row_number,
+                    action="delete",
+                )
+            )
+            continue
         if row.article in catalog.product_articles:
             plan.append(
                 PlanItem(
@@ -252,6 +368,12 @@ def prepare_plan(rows: list[SetRow], catalog: CatalogIndex) -> list[PlanItem]:
                     products=(),
                     row_number=row.row_number,
                     error="Артикул набору збігається з артикулом наявного товару.",
+                    action=row.action,
+                    title=row.title,
+                    enabled=row.enabled,
+                    sort_order=row.sort_order,
+                    discount_percent=row.discount_percent,
+                    currency=row.currency,
                 )
             )
             continue
@@ -274,24 +396,36 @@ def prepare_plan(rows: list[SetRow], catalog: CatalogIndex) -> list[PlanItem]:
                 products=tuple(products) if not error else (),
                 row_number=row.row_number,
                 error=error,
+                action=row.action,
+                title=row.title,
+                enabled=row.enabled,
+                sort_order=row.sort_order,
+                discount_percent=row.discount_percent,
+                currency=row.currency,
             )
         )
     return plan
 
 
 def import_payload(items: list[PlanItem], settings: Settings) -> list[dict[str, Any]]:
-    return [
-        {
+    payload = []
+    for item in items:
+        if not item.ready or item.action != "upsert":
+            continue
+        value: dict[str, Any] = {
             "article": item.article,
-            "title": settings.title,
+            "title": item.title or settings.title,
             "discountedPrice": float(item.discounted_price or Decimal("0")),
-            "currency": settings.currency,
-            "enabled": True,
+            "currency": item.currency or settings.currency,
+            "enabled": item.enabled,
             "products": list(item.products),
         }
-        for item in items
-        if item.ready
-    ]
+        if item.sort_order is not None:
+            value["sortOrder"] = item.sort_order
+        if item.discount_percent is not None:
+            value["discountPercent"] = item.discount_percent
+        payload.append(value)
+    return payload
 
 
 class HoroshopClient:
@@ -365,6 +499,14 @@ class HoroshopClient:
             {"token": self.token(), "items": items},
         )
 
+    def remove_sets(self, articles: list[str]) -> dict[str, Any]:
+        if not articles:
+            return {"status": "OK", "response": {"log": []}}
+        return self._post(
+            "/api/productSet/remove/",
+            {"token": self.token(), "articles": articles},
+        )
+
 
 def import_results(response: dict[str, Any]) -> dict[str, tuple[bool, str]]:
     status = str(response.get("status", "")).upper()
@@ -389,46 +531,183 @@ def import_results(response: dict[str, Any]) -> dict[str, tuple[bool, str]]:
     return results
 
 
+def remove_results(response: dict[str, Any]) -> dict[str, tuple[bool, str]]:
+    nested = response.get("response")
+    log_items = nested.get("log", []) if isinstance(nested, dict) else []
+    results: dict[str, tuple[bool, str]] = {}
+    if not isinstance(log_items, list):
+        return results
+    for entry in log_items:
+        if not isinstance(entry, dict):
+            continue
+        article = normalize(entry.get("article"))
+        if article:
+            results[article] = (bool(entry.get("deleted")), normalize(entry.get("message")))
+    return results
+
+
+def build_state_excel(entries: list[dict[str, Any]]) -> bytes:
+    workbook = Workbook()
+    worksheet = workbook.active
+    worksheet.title = "Наборы"
+    headers = [
+        "Артикул набора",
+        "Артикулы отображения товаров",
+        "Цена набора",
+        "Действие",
+        "Название",
+        "Активен",
+        "Порядок сортировки",
+        "Скидка %",
+        "Валюта",
+        "Статус",
+        "Дата изменения",
+        "Сообщение",
+    ]
+    worksheet.append(headers)
+    worksheet.freeze_panes = "A2"
+    worksheet.auto_filter.ref = "A1:L1"
+    for column, width in {
+        "A": 28, "B": 52, "C": 16, "D": 18, "E": 28, "F": 12,
+        "G": 18, "H": 12, "I": 12, "J": 16, "K": 26, "L": 48,
+    }.items():
+        worksheet.column_dimensions[column].width = width
+    header_fill = PatternFill("solid", fgColor="166534")
+    for cell in worksheet[1]:
+        cell.font = Font(bold=True, color="FFFFFF")
+        cell.fill = header_fill
+        cell.alignment = Alignment(horizontal="center")
+    for entry in entries:
+        worksheet.append([
+            entry.get("article", ""),
+            "; ".join(entry.get("display_articles", [])),
+            entry.get("discounted_price", ""),
+            "обновить",
+            entry.get("title", ""),
+            "Да" if entry.get("enabled", True) else "Нет",
+            entry.get("sort_order", ""),
+            entry.get("discount_percent", ""),
+            entry.get("currency", ""),
+            entry.get("status", ""),
+            entry.get("updated_at", ""),
+            entry.get("message", ""),
+        ])
+    for row in range(2, worksheet.max_row + 1):
+        worksheet.cell(row=row, column=1).number_format = "@"
+        worksheet.cell(row=row, column=2).number_format = "@"
+        worksheet.cell(row=row, column=3).number_format = "0.00"
+    output = io.BytesIO()
+    workbook.save(output)
+    workbook.close()
+    return output.getvalue()
+
+
 class StateStore:
     def __init__(self, path: Path):
         self.path = path
         self.sets: dict[str, dict[str, Any]] = {}
+        self.history: list[dict[str, Any]] = []
         self.load()
 
     def load(self) -> None:
         if not self.path.exists():
             return
-        with self.path.open("r", encoding="utf-8") as file:
+        with self.path.open("r", encoding="utf-8-sig") as file:
             data = json.load(file)
-        if isinstance(data, dict) and isinstance(data.get("sets"), dict):
+        if not isinstance(data, dict):
+            raise HoroshopSetsError("Файл реестра наборов имеет неверный формат.")
+        if isinstance(data.get("sets"), dict):
             self.sets = {
                 normalize(article): value
                 for article, value in data["sets"].items()
                 if normalize(article) and isinstance(value, dict)
             }
+        if isinstance(data.get("history"), list):
+            self.history = [item for item in data["history"] if isinstance(item, dict)][-1000:]
+
+    def _backup_current_file(self) -> None:
+        if not self.path.exists():
+            return
+        backup_dir = self.path.parent / "backups"
+        backup_dir.mkdir(parents=True, exist_ok=True)
+        stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+        backup = backup_dir / f"{self.path.stem}-{stamp}{self.path.suffix}"
+        shutil.copy2(self.path, backup)
+        backups = sorted(backup_dir.glob(f"{self.path.stem}-*{self.path.suffix}"))
+        for old_backup in backups[:-50]:
+            old_backup.unlink(missing_ok=True)
 
     def save(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        self._backup_current_file()
         temp = self.path.with_suffix(f"{self.path.suffix}.tmp")
         with temp.open("w", encoding="utf-8") as file:
             json.dump(
-                {"updated_at": utc_now(), "sets": self.sets},
+                {
+                    "version": 2,
+                    "updated_at": utc_now(),
+                    "sets": self.sets,
+                    "history": self.history[-1000:],
+                },
                 file,
                 ensure_ascii=False,
                 indent=2,
             )
         os.replace(temp, self.path)
 
-    def record(self, item: PlanItem, status: str, message: str) -> None:
-        self.sets[item.article] = {
+    def contains(self, article: str) -> bool:
+        return normalize(article) in self.sets
+
+    def get(self, article: str) -> dict[str, Any] | None:
+        return self.sets.get(normalize(article))
+
+    def _append_history(self, action: str, article: str, status: str, message: str, snapshot: dict[str, Any] | None = None) -> None:
+        event: dict[str, Any] = {
+            "action": action,
+            "article": article,
+            "status": status,
+            "message": message,
+            "at": utc_now(),
+        }
+        if snapshot is not None:
+            event["snapshot"] = snapshot
+        self.history.append(event)
+        self.history = self.history[-1000:]
+
+    def record(self, item: PlanItem, status: str, message: str, source: str = "api") -> None:
+        existing = self.get(item.article) or {}
+        now = utc_now()
+        entry = {
             "article": item.article,
             "display_articles": list(item.display_articles),
             "products": list(item.products),
             "discounted_price": str(item.discounted_price or ""),
+            "title": item.title or existing.get("title", "Вместе дешевле"),
+            "currency": item.currency or existing.get("currency", "UAH"),
+            "enabled": item.enabled,
+            "sort_order": item.sort_order,
+            "discount_percent": item.discount_percent,
             "status": status,
             "message": message,
-            "updated_at": utc_now(),
+            "source": source,
+            "created_at": existing.get("created_at", now),
+            "updated_at": now,
         }
+        self.sets[item.article] = entry
+        self._append_history(item.action, item.article, status, message, entry)
+
+    def record_failed_attempt(self, item: PlanItem, message: str) -> None:
+        self._append_history(item.action, item.article, "error", message)
+
+    def record_deletion(self, article: str, status: str, message: str) -> None:
+        existing = self.sets.get(article)
+        self._append_history("delete", article, status, message, existing)
+        if status == "deleted":
+            self.sets.pop(article, None)
+        elif existing is not None:
+            existing["status"] = status
+            existing["message"] = message
+            existing["updated_at"] = utc_now()
 
     def snapshot(self) -> list[dict[str, Any]]:
         return sorted(

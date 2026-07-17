@@ -38,7 +38,17 @@ class HoroshopSetsTests(unittest.TestCase):
         workbook = load_workbook(io.BytesIO(build_excel_template()), read_only=True)
         self.assertEqual(
             [cell.value for cell in next(workbook.active.iter_rows(max_row=1))],
-            ["Артикул набору", "Артикули товарів", "Ціна набору"],
+            [
+                "Артикул набора",
+                "Артикулы отображения товаров",
+                "Цена набора",
+                "Действие",
+                "Название",
+                "Активен",
+                "Порядок сортировки",
+                "Скидка %",
+                "Валюта",
+            ],
         )
         self.assertEqual(workbook.active["A2"].number_format, "@")
         workbook.close()
@@ -47,12 +57,37 @@ class HoroshopSetsTests(unittest.TestCase):
         rows = parse_excel_sets(
             self.excel_bytes(
                 [
-                    ("Артикул набору", "Артикули товарів", "Ціна набору"),
+                    ("Артикул набора", "Артикулы отображения товаров", "Цена набора"),
                     ("SET-1", "show-a; SHOW-B", "199,50"),
                 ]
             )
         )
         self.assertEqual(rows, [SetRow("SET-1", ("show-a", "SHOW-B"), Decimal("199.50"), 2)])
+
+    def test_excel_supports_delete_action_without_price_or_products(self) -> None:
+        rows = parse_excel_sets(
+            self.excel_bytes(
+                [
+                    ("Артикул набора", "Артикулы отображения товаров", "Цена набора", "Действие"),
+                    ("SET-1", None, None, "удалить"),
+                ]
+            )
+        )
+        self.assertEqual(rows[0].article, "SET-1")
+        self.assertEqual(rows[0].action, "delete")
+        self.assertIsNone(rows[0].discounted_price)
+
+    def test_excel_preserves_zero_sort_order_and_disabled_state(self) -> None:
+        rows = parse_excel_sets(
+            self.excel_bytes(
+                [
+                    ("Артикул набора", "Артикулы отображения товаров", "Цена набора", "Действие", "Название", "Активен", "Порядок сортировки"),
+                    ("SET-1", "A; B", 100, "обновить", "Название", False, 0),
+                ]
+            )
+        )
+        self.assertFalse(rows[0].enabled)
+        self.assertEqual(rows[0].sort_order, 0)
 
     def test_catalog_resolution_prefers_exact_then_case_insensitive(self) -> None:
         catalog = CatalogIndex.from_raw(
@@ -103,6 +138,17 @@ class HoroshopSetsTests(unittest.TestCase):
         self.assertEqual(reloaded.snapshot()[0]["products"], ["REAL-A", "REAL-B"])
         self.assertEqual(reloaded.snapshot()[0]["status"], "synced")
 
+    def test_deletion_removes_active_set_and_keeps_history(self) -> None:
+        item = PlanItem("SET-1", ("A", "B"), Decimal("10.00"), ("REAL-A", "REAL-B"), 2)
+        with tempfile.TemporaryDirectory() as directory:
+            store = StateStore(Path(directory) / "state.json")
+            store.record(item, "synced", "Imported")
+            store.record_deletion("SET-1", "deleted", "Deleted")
+            store.save()
+            reloaded = StateStore(Path(directory) / "state.json")
+        self.assertEqual(reloaded.snapshot(), [])
+        self.assertEqual(reloaded.history[-1]["action"], "delete")
+
     def test_payload_and_api_log_use_discounted_price_only(self) -> None:
         item = PlanItem("SET-1", ("A", "B"), Decimal("10.50"), ("REAL-A", "REAL-B"), 2)
         settings = Settings(
@@ -110,7 +156,7 @@ class HoroshopSetsTests(unittest.TestCase):
             host="0.0.0.0",
             port=8093,
             currency="UAH",
-            title="Разом дешевше",
+            title="Вместе дешевле",
             batch_size=50,
             request_timeout_seconds=60,
             state_file=Path("state.json"),
