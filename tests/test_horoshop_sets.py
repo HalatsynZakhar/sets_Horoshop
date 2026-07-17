@@ -46,6 +46,9 @@ class HoroshopSetsTests(unittest.TestCase):
             ],
         )
         self.assertEqual(workbook.active["A2"].number_format, "@")
+        self.assertEqual(workbook.active.title, "Набори")
+        self.assertEqual(workbook["Інструкція"]["A1"].value, "Шаблон для створення та оновлення наборів")
+        self.assertIn("Артикул набору необов'язковий", workbook["Інструкція"]["A4"].value)
         workbook.close()
 
     def test_excel_parses_price_and_articles(self) -> None:

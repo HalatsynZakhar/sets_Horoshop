@@ -589,7 +589,10 @@ def download_template() -> Response:
     return Response(
         content=build_excel_template(),
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": 'attachment; filename="horoshop_sets_template.xlsx"'},
+        headers={
+            "Content-Disposition": 'attachment; filename="horoshop_sets_template_v2.xlsx"',
+            "Cache-Control": "no-store",
+        },
     )
 
 
@@ -609,7 +612,10 @@ def export_sets() -> Response:
     return Response(
         content=contents,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": 'attachment; filename="horoshop_sets_registry.xlsx"'},
+        headers={
+            "Content-Disposition": 'attachment; filename="horoshop_sets_registry.xlsx"',
+            "Cache-Control": "no-store",
+        },
     )
 
 

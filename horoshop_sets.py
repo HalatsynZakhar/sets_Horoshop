@@ -278,7 +278,7 @@ def parse_excel_sets(data: bytes) -> list[SetRow]:
 def build_excel_template() -> bytes:
     workbook = Workbook()
     worksheet = workbook.active
-    worksheet.title = "Наборы"
+    worksheet.title = "Набори"
     worksheet.append(["Артикул набору (необов'язково)", "Артикули відображення товарів", "Кінцева ціна"])
     worksheet.freeze_panes = "A2"
     worksheet.auto_filter.ref = "A1:C1"
@@ -295,6 +295,25 @@ def build_excel_template() -> bytes:
         worksheet.cell(row=row, column=1).number_format = "@"
         worksheet.cell(row=row, column=2).number_format = "@"
         worksheet.cell(row=row, column=3).number_format = "0.00"
+
+    guide = workbook.create_sheet("Інструкція")
+    guide.column_dimensions["A"].width = 105
+    guide["A1"] = "Шаблон для створення та оновлення наборів"
+    guide["A1"].font = Font(bold=True, size=14, color="FFFFFF")
+    guide["A1"].fill = header_fill
+    guide.merge_cells("A1:B1")
+    instructions = [
+        "Заповнюйте лист «Набори». Кожен рядок створює або оновлює один набір.",
+        "Артикул набору необов'язковий: якщо залишити його порожнім, він буде складений з артикулів товарів через крапку.",
+        "Артикули товарів: щонайменше два значення article_for_display, розділені крапкою з комою (;).",
+        "Кінцева ціна: ціна набору після знижки.",
+        "Не додавайте колонки «Дія», «Активний», «Порядок сортування», «Знижка» або «Валюта».",
+        "Для масового видалення вивантажте реєстр: у ньому є окрема колонка «Видалити (Так)».",
+    ]
+    for row, instruction in enumerate(instructions, start=3):
+        cell = guide.cell(row=row, column=1, value=instruction)
+        cell.alignment = Alignment(wrap_text=True, vertical="top")
+    guide.freeze_panes = "A3"
 
     output = io.BytesIO()
     workbook.save(output)
