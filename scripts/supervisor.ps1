@@ -17,6 +17,10 @@ $WorkerErrorLog = Join-Path $LogsDir "server-error.log"
 $Worker = $null
 $NextUpdateCheck = [DateTime]::MinValue
 
+$machinePath = [Environment]::GetEnvironmentVariable("Path", "Machine")
+$userPath = [Environment]::GetEnvironmentVariable("Path", "User")
+$env:Path = "$machinePath;$userPath"
+
 function Write-Log {
     param([string]$Message)
 
@@ -98,21 +102,16 @@ function Update-ProjectIfNeeded {
     git -C $AppDir fetch origin $Branch --quiet
     if ($LASTEXITCODE -ne 0) { throw "Could not fetch origin/$Branch." }
 
-    $changes = git -C $AppDir status --porcelain
-    if ($LASTEXITCODE -ne 0) { throw "Could not read Git status." }
-    if ($changes) {
-        Write-Log "Local Git changes detected; automatic update was skipped."
-        return $false
-    }
-
     $local = (git -C $AppDir rev-parse HEAD).Trim()
     $remote = (git -C $AppDir rev-parse "origin/$Branch").Trim()
     if ($local -eq $remote) { return $false }
 
-    Write-Log "Update found. Applying fast-forward update from origin/$Branch."
+    Write-Log "Update found. Resetting deployment to origin/$Branch."
     Stop-Worker
-    git -C $AppDir pull --ff-only origin $Branch
-    if ($LASTEXITCODE -ne 0) { throw "Git fast-forward update failed." }
+    git -C $AppDir reset --hard "origin/$Branch"
+    if ($LASTEXITCODE -ne 0) { throw "Git hard reset failed." }
+    git -C $AppDir clean -fd
+    if ($LASTEXITCODE -ne 0) { throw "Could not clean untracked deployment files." }
     & $PythonExe -m pip install -r (Join-Path $AppDir "requirements.txt")
     if ($LASTEXITCODE -ne 0) { throw "Could not install dependencies after update." }
     return $true

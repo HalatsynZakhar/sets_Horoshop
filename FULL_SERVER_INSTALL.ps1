@@ -1,7 +1,6 @@
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory = $true)]
-    [string]$Repository,
+    [string]$Repository = "https://github.com/HalatsynZakhar/sets_Horoshop.git",
     [string]$InstallDir = "C:\HoroshopSets",
     [string]$Branch = "main",
     [ValidateRange(1, 1439)]
@@ -30,6 +29,13 @@ function Ensure-Command {
     Write-Output "Installing $Name..."
     winget install --id $WingetId --exact --silent --accept-package-agreements --accept-source-agreements
     if ($LASTEXITCODE -ne 0) { throw "winget could not install $Name." }
+    Update-CurrentPath
+}
+
+function Update-CurrentPath {
+    $machinePath = [Environment]::GetEnvironmentVariable("Path", "Machine")
+    $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
+    $env:Path = "$machinePath;$userPath"
 }
 
 function Get-PythonCommand {
@@ -48,14 +54,22 @@ try {
     Assert-Administrator
     Ensure-Command -Name "git" -WingetId "Git.Git"
     Ensure-Command -Name "py" -WingetId "Python.Python.3.13"
+    Update-CurrentPath
+
+    $safeDirectory = $InstallDir.Replace("\", "/")
+    $knownSafeDirectories = @(& git config --system --get-all safe.directory 2>$null)
+    if ($knownSafeDirectories -notcontains $safeDirectory) {
+        & git config --system --add safe.directory $safeDirectory
+        if ($LASTEXITCODE -ne 0) { throw "Could not mark $InstallDir as a safe Git directory." }
+    }
 
     if (Test-Path (Join-Path $InstallDir ".git")) {
-        $changes = git -C $InstallDir status --porcelain
-        if ($changes) { throw "The server copy has local Git changes. Resolve them before installation/update." }
         git -C $InstallDir fetch origin $Branch
         if ($LASTEXITCODE -ne 0) { throw "Could not fetch origin/$Branch." }
-        git -C $InstallDir pull --ff-only origin $Branch
-        if ($LASTEXITCODE -ne 0) { throw "Could not update the server copy." }
+        git -C $InstallDir reset --hard "origin/$Branch"
+        if ($LASTEXITCODE -ne 0) { throw "Could not reset the server copy to origin/$Branch." }
+        git -C $InstallDir clean -fd
+        if ($LASTEXITCODE -ne 0) { throw "Could not clean untracked deployment files." }
     }
     elseif (Test-Path $InstallDir) {
         throw "$InstallDir exists but is not a Git repository."
