@@ -113,6 +113,33 @@ function Grant-ProjectAccess {
     if ($LASTEXITCODE -ne 0) { throw "Could not grant SYSTEM access to $InstallDir." }
 }
 
+function Initialize-Configuration {
+    $configPath = Join-Path $InstallDir "config.json"
+    if (!(Test-Path $configPath)) {
+        Copy-Item (Join-Path $InstallDir "config.example.json") $configPath
+        Write-Host "Created local configuration: $configPath"
+    }
+    else {
+        Write-Host "Using existing local configuration: $configPath"
+    }
+
+    if (!$SkipConfigEdit) {
+        Write-Host "Set the real Horoshop domain in config.json, then close Notepad." -ForegroundColor Yellow
+        Start-Process notepad.exe -ArgumentList "`"$configPath`"" -Wait
+    }
+
+    try {
+        $config = Get-Content -LiteralPath $configPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    }
+    catch {
+        throw "config.json is invalid: $($_.Exception.Message)"
+    }
+    if (![string]$config.horoshop.domain -or [string]$config.horoshop.domain -match "example\.com") {
+        throw "Set the real horoshop.domain in $configPath before continuing."
+    }
+    return $config
+}
+
 function Start-AndVerifyService {
     $pidFile = Join-Path $InstallDir "logs\horoshop_sets.pid"
     $supervisorLog = Join-Path $InstallDir "logs\supervisor.log"
@@ -169,6 +196,10 @@ try {
     }
 
     if (Test-Path (Join-Path $InstallDir ".git")) {
+        $configBackup = Join-Path $env:TEMP "HoroshopSets-config-$PID.json"
+        if (Test-Path (Join-Path $InstallDir "config.json")) {
+            Copy-Item (Join-Path $InstallDir "config.json") $configBackup -Force
+        }
         Stop-ExistingRuntime
         git -C $InstallDir fetch origin $Branch
         if ($LASTEXITCODE -ne 0) { throw "Could not fetch origin/$Branch." }
@@ -176,6 +207,11 @@ try {
         if ($LASTEXITCODE -ne 0) { throw "Could not reset the server copy to origin/$Branch." }
         git -C $InstallDir clean -fd
         if ($LASTEXITCODE -ne 0) { throw "Could not clean untracked deployment files." }
+        if (Test-Path $configBackup) {
+            Copy-Item $configBackup (Join-Path $InstallDir "config.json") -Force
+            Remove-Item $configBackup -Force -ErrorAction SilentlyContinue
+            Write-Output "Restored local config.json after code update."
+        }
     }
     elseif (Test-Path $InstallDir) {
         throw "$InstallDir exists but is not a Git repository."
@@ -187,18 +223,7 @@ try {
 
     Grant-ProjectAccess
 
-    $configPath = Join-Path $InstallDir "config.json"
-    if (!(Test-Path $configPath)) {
-        Copy-Item (Join-Path $InstallDir "config.example.json") $configPath
-    }
-    if (!$SkipConfigEdit) {
-        Write-Host "Set the real Horoshop domain in config.json, then close Notepad." -ForegroundColor Yellow
-        Start-Process notepad.exe -ArgumentList "`"$configPath`"" -Wait
-    }
-    $config = Get-Content -LiteralPath $configPath -Raw -Encoding UTF8 | ConvertFrom-Json
-    if (![string]$config.horoshop.domain -or [string]$config.horoshop.domain -match "example\.com") {
-        throw "Set the real horoshop.domain in $configPath before continuing."
-    }
+    $config = Initialize-Configuration
 
     Set-Location $InstallDir
     $venvDir = Join-Path $InstallDir ".venv"
