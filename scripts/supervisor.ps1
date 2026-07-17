@@ -57,11 +57,28 @@ function Ensure-PythonEnvironment {
         throw "Could not create virtual environment: $VenvDir"
     }
 
+    & $PythonExe -m pip install --upgrade pip
+    if ($LASTEXITCODE -ne 0) {
+        throw "Could not upgrade pip in $VenvDir"
+    }
     & $PythonExe -m pip install -r (Join-Path $AppDir "requirements.txt")
     if ($LASTEXITCODE -ne 0) {
         throw "Could not install Python dependencies into $VenvDir"
     }
     Write-Log "Virtual environment and dependencies were created."
+}
+
+function Refresh-ProjectDependencies {
+    Ensure-PythonEnvironment
+    & $PythonExe -m pip install -r (Join-Path $AppDir "requirements.txt")
+    if ($LASTEXITCODE -ne 0) {
+        throw "Could not install dependencies after updating the project."
+    }
+    & $PythonExe -m py_compile $ServerScript (Join-Path $AppDir "horoshop_sets.py")
+    if ($LASTEXITCODE -ne 0) {
+        throw "Python syntax check failed after updating the project."
+    }
+    Write-Log "Dependencies and application files were refreshed successfully."
 }
 
 function Restore-WorkerFromPidFile {
@@ -131,15 +148,13 @@ function Update-ProjectIfNeeded {
     $remote = (git -C $AppDir rev-parse "origin/$Branch").Trim()
     if ($local -eq $remote) { return $false }
 
-    Write-Log "Update found. Resetting deployment to origin/$Branch."
+    Write-Log "Update found. Stopping service and rebuilding deployment from origin/$Branch."
     Stop-Worker
     git -C $AppDir reset --hard "origin/$Branch"
     if ($LASTEXITCODE -ne 0) { throw "Git hard reset failed." }
     git -C $AppDir clean -fd
     if ($LASTEXITCODE -ne 0) { throw "Could not clean untracked deployment files." }
-    Ensure-PythonEnvironment
-    & $PythonExe -m pip install -r (Join-Path $AppDir "requirements.txt")
-    if ($LASTEXITCODE -ne 0) { throw "Could not install dependencies after update." }
+    Refresh-ProjectDependencies
     return $true
 }
 
