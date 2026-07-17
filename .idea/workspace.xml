@@ -4,11 +4,7 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="94a6a0f0-5ea8-40e0-bc22-5c6674b3ac65" name="Changes" comment="">
-      <change beforePath="$PROJECT_DIR$/.gitignore" beforeDir="false" afterPath="$PROJECT_DIR$/.gitignore" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/FULL_SERVER_INSTALL.ps1" beforeDir="false" afterPath="$PROJECT_DIR$/FULL_SERVER_INSTALL.ps1" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/scripts/supervisor.ps1" beforeDir="false" afterPath="$PROJECT_DIR$/scripts/supervisor.ps1" afterDir="false" />
-    </list>
+    <list default="true" id="94a6a0f0-5ea8-40e0-bc22-5c6674b3ac65" name="Changes" comment="" />
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
     <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
