@@ -43,6 +43,8 @@ class HoroshopSetsTests(unittest.TestCase):
                 "Артикул набору (необов'язково)",
                 "Артикули відображення товарів",
                 "Кінцева ціна",
+                "Знижка %",
+                "База розрахунку (Ціна / РРЦ)",
             ],
         )
         self.assertEqual(workbook.active["A2"].number_format, "@")
@@ -212,8 +214,149 @@ class HoroshopSetsTests(unittest.TestCase):
             )
             settings = load_settings(config_path)
             repaired_config = config_path.read_text(encoding="utf-8")
-        self.assertEqual(settings.public_log_file, Path(r"C:\ShareFiles\public") / "visible.log")
+        self.assertEqual( settings.public_log_file, Path(r"C:\ShareFiles\public") / "visible.log")
         self.assertIn(r'"public_log_path":"C:\\ShareFiles\\public"', repaired_config)
+
+    def test_calculates_price_from_current_prices_with_discount_and_rounds_to_integer(self) -> None:
+        catalog = CatalogIndex.from_raw(
+            [
+                {"article": "REAL-A", "article_for_display": "A", "price": 250, "price_old": 300},
+                {"article": "REAL-B", "article_for_display": "B", "price": 149, "price_old": 0},
+            ]
+        )
+        rows = parse_excel_sets(
+            self.excel_bytes(
+                [
+                    (
+                        "Артикул набору (необов'язково)",
+                        "Артикули відображення товарів",
+                        "Кінцева ціна",
+                        "Знижка %",
+                        "База розрахунку (Ціна / РРЦ)",
+                    ),
+                    ("SET-CURR", "A; B", None, 10, "Ціна"),
+                ]
+            )
+        )
+        plan = prepare_plan(rows, catalog)
+        self.assertTrue(plan[0].ready)
+        self.assertEqual(plan[0].base_price_sum, Decimal("399.00"))
+        # 399 * 0.9 = 359.1 -> 359
+        self.assertEqual(plan[0].discounted_price, Decimal("359"))
+
+    def test_calculates_price_from_rrc_sum_with_discount_and_half_up_rounding(self) -> None:
+        catalog = CatalogIndex.from_raw(
+            [
+                {"article": "REAL-A", "article_for_display": "A", "price": 200, "price_old": 250},
+                {"article": "REAL-B", "article_for_display": "B", "price": 180, "price_old": 225},
+            ]
+        )
+        rows = parse_excel_sets(
+            self.excel_bytes(
+                [
+                    (
+                        "Артикул набору (необов'язково)",
+                        "Артикули відображення товарів",
+                        "Кінцева ціна",
+                        "Знижка %",
+                        "База розрахунку (Ціна / РРЦ)",
+                    ),
+                    (None, "A; B", None, 5, "РРЦ"),
+                ]
+            )
+        )
+        plan = prepare_plan(rows, catalog)
+        self.assertTrue(plan[0].ready)
+        self.assertEqual(plan[0].article, "A.B")
+        self.assertEqual(plan[0].base_price_sum, Decimal("475.00"))
+        # 475 * 0.95 = 451.25 -> 451; let's also verify 250 * 0.95 = 237.5 -> 238
+        self.assertEqual(plan[0].discounted_price, Decimal("451"))
+
+    def test_rrc_calculation_fails_when_any_product_lacks_old_price(self) -> None:
+        catalog = CatalogIndex.from_raw(
+            [
+                {"article": "REAL-A", "article_for_display": "A", "price": 200, "price_old": 250},
+                {"article": "REAL-B", "article_for_display": "B", "price": 180, "price_old": 0},
+            ]
+        )
+        rows = parse_excel_sets(
+            self.excel_bytes(
+                [
+                    ("Артикул набору", "Артикули відображення товарів", "Кінцева ціна"),
+                    ("SET-RRC-ERR", "A; B", None),
+                ]
+            ),
+            default_discount_percent=Decimal("15"),
+            default_price_base="rrc",
+        )
+        plan = prepare_plan(rows, catalog)
+        self.assertFalse(plan[0].ready)
+        self.assertIn("не вказана стара ціна (РРЦ)", plan[0].error)
+        self.assertIn("'B'", plan[0].error)
+
+    def test_excel_uses_web_defaults_when_row_price_and_discount_are_blank(self) -> None:
+        rows = parse_excel_sets(
+            self.excel_bytes(
+                [
+                    ("Артикул набору", "Артикули відображення товарів", "Кінцева ціна"),
+                    ("SET-DEF", "A; B", None),
+                    ("SET-FIXED", "A; B", "320"),
+                ]
+            ),
+            default_discount_percent=Decimal("12"),
+            default_price_base="rrc",
+        )
+        self.assertIsNone(rows[0].discounted_price)
+        self.assertEqual(rows[0].discount_percent, Decimal("12.00"))
+        self.assertEqual(rows[0].price_base, "rrc")
+        self.assertEqual(rows[1].discounted_price, Decimal("320.00"))
+        self.assertIsNone(rows[1].discount_percent)
+
+    def test_excel_requires_price_or_discount(self) -> None:
+        with self.assertRaisesRegex(ValueError, "вкажіть кінцеву ціну або знижку"):
+            parse_excel_sets(
+                self.excel_bytes(
+                    [
+                        ("Артикул набору", "Артикули відображення товарів", "Кінцева ціна"),
+                        ("SET-NO-PRICE", "A; B", None),
+                    ]
+                )
+            )
+
+    def test_half_up_rounding_on_exact_half(self) -> None:
+        catalog = CatalogIndex.from_raw(
+            [
+                {"article": "REAL-A", "article_for_display": "A", "price": 150},
+                {"article": "REAL-B", "article_for_display": "B", "price": 100},
+            ]
+        )
+        # 250 * (100 - 5) / 100 = 237.5 -> 238
+        plan = prepare_plan(
+            [SetRow("SET-HALF", ("A", "B"), None, 2, discount_percent=Decimal("5"), price_base="current")],
+            catalog,
+        )
+        self.assertTrue(plan[0].ready)
+        self.assertEqual(plan[0].discounted_price, Decimal("238"))
+
+    def test_registry_export_preserves_discount_and_price_base_columns(self) -> None:
+        data = build_state_excel(
+            [
+                {
+                    "article": "SET-1",
+                    "display_articles": ["A", "B"],
+                    "discounted_price": "359",
+                    "discount_percent": "10",
+                    "price_base": "rrc",
+                }
+            ]
+        )
+        workbook = load_workbook(io.BytesIO(data), read_only=True)
+        worksheet = workbook.active
+        self.assertEqual(worksheet["E1"].value, "Знижка %")
+        self.assertEqual(worksheet["F1"].value, "База розрахунку (Ціна / РРЦ)")
+        self.assertEqual(worksheet["E2"].value, "10")
+        self.assertEqual(worksheet["F2"].value, "РРЦ")
+        workbook.close()
 
 
 if __name__ == "__main__":

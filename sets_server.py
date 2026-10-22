@@ -18,6 +18,7 @@ from horoshop_sets import (
     Credentials,
     HoroshopClient,
     HoroshopSetsError,
+    PRICE_BASE_CURRENT,
     PlanItem,
     SetRow,
     SET_TITLE,
@@ -26,15 +27,18 @@ from horoshop_sets import (
     build_excel_template,
     build_set_article,
     build_state_excel,
+    format_discount,
     import_payload,
     import_results,
     load_settings,
+    normalize,
+    parse_discount_percent,
     parse_excel_sets,
     parse_price,
+    parse_price_base,
     prepare_plan,
     remove_results,
     split_display_articles,
-    normalize,
 )
 
 
@@ -136,7 +140,7 @@ def credentials_from_form(form: Any) -> Credentials:
     return Credentials(login=login, password=password, token=token)
 
 
-async def upload_bytes(request: Request) -> tuple[bytes, Credentials]:
+async def upload_bytes(request: Request) -> tuple[bytes, Credentials, Decimal | None, str]:
     form = await request.form()
     uploaded = form.get("file")
     if uploaded is None or not hasattr(uploaded, "read"):
@@ -149,10 +153,13 @@ async def upload_bytes(request: Request) -> tuple[bytes, Credentials]:
         raise HoroshopSetsError("Завантажений Excel-файл порожній.")
     if len(contents) > MAX_UPLOAD_BYTES:
         raise HoroshopSetsError("Excel-файл перевищує обмеження 20 МБ.")
-    return contents, credentials_from_form(form)
+    default_discount = parse_discount_percent(form.get("discount_percent", ""))
+    default_price_base = parse_price_base(form.get("price_base", ""), default=PRICE_BASE_CURRENT)
+    return contents, credentials_from_form(form), default_discount, default_price_base
 
 
 def serialise_item(item: PlanItem) -> dict[str, Any]:
+    discount_str = format_discount(item.discount_percent)
     return {
         "article": item.article,
         "display_articles": list(item.display_articles),
@@ -163,16 +170,27 @@ def serialise_item(item: PlanItem) -> dict[str, Any]:
         "title": item.title,
         "enabled": item.enabled,
         "sort_order": item.sort_order,
-        "discount_percent": item.discount_percent,
+        "discount_percent": discount_str or None,
+        "price_base": item.price_base if discount_str else "",
+        "base_price_sum": str(item.base_price_sum) if item.base_price_sum is not None else None,
         "currency": item.currency,
         "status": "ready" if item.ready else "error",
         "message": item.error,
     }
 
 
-def create_plan(contents: bytes, credentials: Credentials) -> tuple[list[PlanItem], HoroshopClient]:
+def create_plan(
+    contents: bytes,
+    credentials: Credentials,
+    default_discount_percent: Decimal | None = None,
+    default_price_base: str = PRICE_BASE_CURRENT,
+) -> tuple[list[PlanItem], HoroshopClient]:
     runtime_settings, _ = get_runtime()
-    rows = parse_excel_sets(contents)
+    rows = parse_excel_sets(
+        contents,
+        default_discount_percent=default_discount_percent,
+        default_price_base=default_price_base,
+    )
     client = HoroshopClient(runtime_settings, credentials)
     catalog = (
         CatalogIndex.from_raw(client.export_catalog())
@@ -182,8 +200,18 @@ def create_plan(contents: bytes, credentials: Credentials) -> tuple[list[PlanIte
     return prepare_plan(rows, catalog), client
 
 
-def preview_excel(contents: bytes, credentials: Credentials) -> dict[str, Any]:
-    plan, _ = create_plan(contents, credentials)
+def preview_excel(
+    contents: bytes,
+    credentials: Credentials,
+    default_discount_percent: Decimal | None = None,
+    default_price_base: str = PRICE_BASE_CURRENT,
+) -> dict[str, Any]:
+    plan, _ = create_plan(
+        contents,
+        credentials,
+        default_discount_percent=default_discount_percent,
+        default_price_base=default_price_base,
+    )
     return {
         "items": [serialise_item(item) for item in plan],
         "ready": sum(item.ready for item in plan),
@@ -191,9 +219,19 @@ def preview_excel(contents: bytes, credentials: Credentials) -> dict[str, Any]:
     }
 
 
-def import_excel(contents: bytes, credentials: Credentials) -> dict[str, Any]:
+def import_excel(
+    contents: bytes,
+    credentials: Credentials,
+    default_discount_percent: Decimal | None = None,
+    default_price_base: str = PRICE_BASE_CURRENT,
+) -> dict[str, Any]:
     runtime_settings, store = get_runtime()
-    plan, client = create_plan(contents, credentials)
+    plan, client = create_plan(
+        contents,
+        credentials,
+        default_discount_percent=default_discount_percent,
+        default_price_base=default_price_base,
+    )
     upsert_items = [item for item in plan if item.ready and item.action == "upsert"]
     register_items = [item for item in plan if item.ready and item.action == "register"]
     delete_items = [item for item in plan if item.ready and item.action == "delete"]
@@ -288,7 +326,27 @@ def editor_plan(data: dict[str, Any], credentials: Credentials) -> tuple[PlanIte
     if len(display_articles) < 2:
         raise HoroshopSetsError("У наборі має бути щонайменше два товари.")
 
-    price = parse_price(data.get("discounted_price", existing.get("discounted_price", "")))
+    raw_price = normalize(data.get("discounted_price")) if "discounted_price" in data else normalize(existing.get("discounted_price"))
+    has_discount_arg = "discount_percent" in data and normalize(data.get("discount_percent")) != ""
+    discount_percent = (
+        parse_discount_percent(data.get("discount_percent"))
+        if "discount_percent" in data
+        else parse_discount_percent(existing.get("discount_percent"))
+    )
+    price_base = parse_price_base(
+        data.get("price_base") if "price_base" in data else existing.get("price_base"),
+        default=PRICE_BASE_CURRENT,
+    )
+
+    if raw_price:
+        price: Decimal | None = parse_price(raw_price)
+        if not has_discount_arg:
+            discount_percent = None
+    elif discount_percent is not None:
+        price = None
+    else:
+        raise ValueError("Вкажіть кінцеву ціну або знижку у відсотках.")
+
     title = SET_TITLE
     enabled = bool(existing.get("enabled", True))
     currency = normalize(existing.get("currency")) or runtime_settings.currency
@@ -302,8 +360,9 @@ def editor_plan(data: dict[str, Any], credentials: Credentials) -> tuple[PlanIte
         title=title,
         enabled=enabled,
         sort_order=None,
-        discount_percent=None,
+        discount_percent=discount_percent,
         currency=currency,
+        price_base=price_base,
     )
     item = prepare_plan([row], CatalogIndex.from_raw(client.export_catalog()))[0]
     if item.error:
@@ -335,8 +394,25 @@ def create_manual_set(data: dict[str, Any]) -> dict[str, Any]:
         if store.contains(article):
             raise HoroshopSetsError("Цей набір уже є в реєстрі. Скористайтеся редагуванням у таблиці нижче.")
 
-    price = parse_price(data.get("discounted_price", ""))
-    row = SetRow(article, display_articles, price, row_number=1)
+    raw_price = normalize(data.get("discounted_price"))
+    discount_percent = parse_discount_percent(data.get("discount_percent"))
+    price_base = parse_price_base(data.get("price_base"), default=PRICE_BASE_CURRENT)
+    if raw_price:
+        price: Decimal | None = parse_price(raw_price)
+        discount_percent = None
+    elif discount_percent is not None:
+        price = None
+    else:
+        raise ValueError("Вкажіть кінцеву ціну або знижку у відсотках.")
+
+    row = SetRow(
+        article,
+        display_articles,
+        price,
+        row_number=1,
+        discount_percent=discount_percent,
+        price_base=price_base,
+    )
     client = HoroshopClient(runtime_settings, credentials)
     item = prepare_plan([row], CatalogIndex.from_raw(client.export_catalog()))[0]
     if item.error:
@@ -716,8 +792,14 @@ async def delete_sets(request: Request) -> dict[str, Any]:
 @app.post("/api/preview")
 async def preview(request: Request) -> dict[str, Any]:
     try:
-        contents, credentials = await upload_bytes(request)
-        return await asyncio.to_thread(preview_excel, contents, credentials)
+        contents, credentials, default_discount, default_price_base = await upload_bytes(request)
+        return await asyncio.to_thread(
+            preview_excel,
+            contents,
+            credentials,
+            default_discount,
+            default_price_base,
+        )
     except (HoroshopSetsError, ValueError) as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
 
@@ -725,8 +807,14 @@ async def preview(request: Request) -> dict[str, Any]:
 @app.post("/api/import")
 async def import_sets(request: Request) -> dict[str, Any]:
     try:
-        contents, credentials = await upload_bytes(request)
-        return await asyncio.to_thread(import_excel, contents, credentials)
+        contents, credentials, default_discount, default_price_base = await upload_bytes(request)
+        return await asyncio.to_thread(
+            import_excel,
+            contents,
+            credentials,
+            default_discount,
+            default_price_base,
+        )
     except (HoroshopSetsError, ValueError) as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
 

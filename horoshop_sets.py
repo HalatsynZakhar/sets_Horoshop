@@ -7,7 +7,7 @@ import re
 import shutil
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from pathlib import Path
 from typing import Any
 from urllib.parse import urljoin
@@ -19,6 +19,8 @@ from openpyxl.styles import Alignment, Font, PatternFill
 
 DEFAULT_EXPORT_LIMIT = 500
 SET_TITLE = "Разом дешевше"
+PRICE_BASE_CURRENT = "current"
+PRICE_BASE_RRC = "rrc"
 PUBLIC_LOG_PATH_JSON_PATTERN = re.compile(r'("public_log_path"\s*:\s*")(?P<value>[^"]*)(")')
 
 
@@ -61,14 +63,17 @@ class SetRow:
     title: str = ""
     enabled: bool = True
     sort_order: int | None = None
-    discount_percent: int | None = None
+    discount_percent: Decimal | int | None = None
     currency: str = ""
+    price_base: str = PRICE_BASE_CURRENT
 
 
 @dataclass(frozen=True)
 class CatalogProduct:
     article: str
     article_for_display: str
+    price: Decimal | None = None
+    price_old: Decimal | None = None
 
 
 @dataclass(frozen=True)
@@ -83,8 +88,10 @@ class PlanItem:
     title: str = ""
     enabled: bool = True
     sort_order: int | None = None
-    discount_percent: int | None = None
+    discount_percent: Decimal | int | None = None
     currency: str = ""
+    price_base: str = PRICE_BASE_CURRENT
+    base_price_sum: Decimal | None = None
 
     @property
     def ready(self) -> bool:
@@ -182,6 +189,101 @@ def parse_price(value: Any) -> Decimal:
     return price.quantize(Decimal("0.01"))
 
 
+def parse_catalog_price(value: Any) -> Decimal | None:
+    if value is None or isinstance(value, bool):
+        return None
+    text = normalize(value).replace(" ", "").replace(",", ".")
+    if not text:
+        return None
+    try:
+        price = Decimal(text)
+    except (InvalidOperation, ValueError):
+        return None
+    if price <= 0:
+        return None
+    return price.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+
+def parse_discount_percent(value: Any) -> Decimal | None:
+    if value is None or isinstance(value, bool):
+        return None
+    text = normalize(value).replace("%", "").replace(" ", "").replace(",", ".")
+    if not text:
+        return None
+    try:
+        discount = Decimal(text)
+    except (InvalidOperation, ValueError) as error:
+        raise ValueError("знижка має бути числом у відсотках (від 0 до 99).") from error
+    if discount < 0 or discount >= 100:
+        raise ValueError("знижка має бути в межах від 0 до 99%.")
+    return discount.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+
+def format_discount(value: Decimal | int | float | str | None) -> str:
+    if value is None or normalize(value) == "":
+        return ""
+    try:
+        dec = Decimal(normalize(value).replace(",", "."))
+    except (InvalidOperation, ValueError):
+        return normalize(value)
+    if dec == dec.to_integral_value():
+        return str(int(dec))
+    return str(dec.normalize())
+
+
+def parse_price_base(value: Any, default: str = PRICE_BASE_CURRENT) -> str:
+    text = normalize(value).casefold()
+    if not text:
+        return default
+    current_aliases = {
+        "current",
+        "current_price",
+        "price",
+        "ціна",
+        "цена",
+        "поточна",
+        "поточна ціна",
+        "актуальна",
+        "актуальна ціна",
+        "текущая",
+        "текущая цена",
+        "актуальная",
+        "актуальная цена",
+    }
+    rrc_aliases = {
+        "rrc",
+        "rrp",
+        "old",
+        "old_price",
+        "price_old",
+        "ррц",
+        "сума ррц",
+        "сумма ррц",
+        "стара",
+        "стара ціна",
+        "старая",
+        "старая цена",
+        "ррц (стара ціна)",
+        "ррц (старая цена)",
+        "сума ррц (старої ціни)",
+        "сумма ррц (старой цены)",
+    }
+    if text in current_aliases:
+        return PRICE_BASE_CURRENT
+    if text in rrc_aliases:
+        return PRICE_BASE_RRC
+    raise ValueError("база розрахунку має бути «Ціна» (актуальна ціна) або «РРЦ» (стара ціна).")
+
+
+def price_base_label(value: Any) -> str:
+    return "РРЦ" if normalize(value).casefold() == PRICE_BASE_RRC else "Ціна"
+
+
+def calculate_discounted_price(base_price_sum: Decimal, discount_percent: Decimal) -> Decimal:
+    raw = base_price_sum * (Decimal("100") - discount_percent) / Decimal("100")
+    return raw.quantize(Decimal("1"), rounding=ROUND_HALF_UP)
+
+
 def split_display_articles(value: Any) -> tuple[str, ...]:
     values = tuple(item.strip() for item in normalize(value).split(";") if item.strip())
     if len(values) < 2:
@@ -249,12 +351,42 @@ def parse_optional_int(value: Any, label: str, minimum: int, maximum: int | None
     return parsed
 
 
-def parse_excel_sets(data: bytes) -> list[SetRow]:
+def _detect_excel_columns(header_row: tuple[Any, ...]) -> tuple[int, int, int]:
+    action_idx: int | None = None
+    discount_idx: int | None = None
+    price_base_idx: int | None = None
+    for idx in range(3, len(header_row)):
+        header = normalize(header_row[idx]).casefold()
+        if not header:
+            continue
+        if any(word in header for word in ("видалити", "удалить", "дія", "действие", "action", "delete")):
+            action_idx = idx
+        elif any(word in header for word in ("знижка", "скидка", "discount")):
+            discount_idx = idx
+        elif any(word in header for word in ("база", "ррц", "тип ціни", "тип цены", "розрахунок", "розрахунку", "расчет", "расчёт", "base")):
+            price_base_idx = idx
+
+    if discount_idx == 3 and action_idx is None:
+        return (5, 3, price_base_idx if price_base_idx is not None else 4)
+    return (
+        action_idx if action_idx is not None else 3,
+        discount_idx if discount_idx is not None else 4,
+        price_base_idx if price_base_idx is not None else 5,
+    )
+
+
+def parse_excel_sets(
+    data: bytes,
+    default_discount_percent: Decimal | None = None,
+    default_price_base: str = PRICE_BASE_CURRENT,
+) -> list[SetRow]:
     workbook = load_workbook(io.BytesIO(data), read_only=True, data_only=True)
     try:
         worksheet = workbook.worksheets[0]
         rows: list[SetRow] = []
         seen_articles: set[str] = set()
+        action_idx, discount_idx, price_base_idx = 3, 4, 5
+        normalized_default_base = parse_price_base(default_price_base, default=PRICE_BASE_CURRENT)
         for row_number, row in enumerate(worksheet.iter_rows(values_only=True), start=1):
             if not row or all(value is None for value in row[:9]):
                 continue
@@ -266,9 +398,11 @@ def parse_excel_sets(data: bytes) -> list[SetRow]:
                 "артикул набору (необов'язково)",
                 "артикул набора",
             }:
+                action_idx, discount_idx, price_base_idx = _detect_excel_columns(row)
                 continue
             try:
-                action = parse_action(row[3] if len(row) > 3 else "")
+                raw_action = row[action_idx] if len(row) > action_idx else ""
+                action = parse_action(raw_action)
                 if action == "delete":
                     if not article:
                         raise ValueError("для видалення вкажіть артикул набору.")
@@ -284,11 +418,30 @@ def parse_excel_sets(data: bytes) -> list[SetRow]:
                 if key in seen_articles:
                     raise ValueError(f"артикул набору '{article}' повторюється.")
                 seen_articles.add(key)
-                price = parse_price(row[2] if len(row) > 2 else "")
+
+                raw_price = normalize(row[2] if len(row) > 2 else "")
+                raw_discount = row[discount_idx] if len(row) > discount_idx else None
+                raw_price_base = row[price_base_idx] if len(row) > price_base_idx else None
+                row_discount = parse_discount_percent(raw_discount)
+
+                if raw_price:
+                    price: Decimal | None = parse_price(raw_price)
+                    discount_percent = row_discount
+                    price_base = (
+                        parse_price_base(raw_price_base, default=PRICE_BASE_CURRENT)
+                        if normalize(raw_price_base)
+                        else PRICE_BASE_CURRENT
+                    )
+                else:
+                    price = None
+                    discount_percent = row_discount if row_discount is not None else default_discount_percent
+                    price_base = parse_price_base(raw_price_base, default=normalized_default_base)
+                    if discount_percent is None:
+                        raise ValueError("вкажіть кінцеву ціну або знижку у відсотках.")
+
                 title = ""
                 enabled = True
                 sort_order = None
-                discount_percent = None
                 currency = ""
             except ValueError as error:
                 raise ValueError(f"Рядок {row_number}: {error}") from error
@@ -304,6 +457,7 @@ def parse_excel_sets(data: bytes) -> list[SetRow]:
                     sort_order=sort_order,
                     discount_percent=discount_percent,
                     currency=currency,
+                    price_base=price_base,
                 )
             )
         if not rows:
@@ -317,12 +471,22 @@ def build_excel_template() -> bytes:
     workbook = Workbook()
     worksheet = workbook.active
     worksheet.title = "Набори"
-    worksheet.append(["Артикул набору (необов'язково)", "Артикули відображення товарів", "Кінцева ціна"])
+    worksheet.append(
+        [
+            "Артикул набору (необов'язково)",
+            "Артикули відображення товарів",
+            "Кінцева ціна",
+            "Знижка %",
+            "База розрахунку (Ціна / РРЦ)",
+        ]
+    )
     worksheet.freeze_panes = "A2"
-    worksheet.auto_filter.ref = "A1:C1"
+    worksheet.auto_filter.ref = "A1:E1"
     worksheet.column_dimensions["A"].width = 28
     worksheet.column_dimensions["B"].width = 58
     worksheet.column_dimensions["C"].width = 18
+    worksheet.column_dimensions["D"].width = 14
+    worksheet.column_dimensions["E"].width = 28
 
     header_fill = PatternFill("solid", fgColor="166534")
     for cell in worksheet[1]:
@@ -333,6 +497,8 @@ def build_excel_template() -> bytes:
         worksheet.cell(row=row, column=1).number_format = "@"
         worksheet.cell(row=row, column=2).number_format = "@"
         worksheet.cell(row=row, column=3).number_format = "0.00"
+        worksheet.cell(row=row, column=4).number_format = "0.##"
+        worksheet.cell(row=row, column=5).number_format = "@"
 
     guide = workbook.create_sheet("Інструкція")
     guide.column_dimensions["A"].width = 105
@@ -344,8 +510,9 @@ def build_excel_template() -> bytes:
         "Заповнюйте лист «Набори». Кожен рядок створює або оновлює один набір.",
         "Артикул набору необов'язковий: якщо залишити його порожнім, він буде складений з артикулів товарів через крапку.",
         "Артикули товарів: щонайменше два значення article_for_display, розділені крапкою з комою (;).",
-        "Кінцева ціна: ціна набору після знижки.",
-        "Не додавайте колонки «Дія», «Активний», «Порядок сортування», «Знижка» або «Валюта».",
+        "Кінцева ціна: ціна набору після знижки. Якщо залишити поле порожнім, ціна буде розрахована автоматично за вказаною знижкою % (із заокругленням до цілих).",
+        "Знижка %: додаткова знижка у відсотках (наприклад, 10), яка застосовується, якщо «Кінцева ціна» не заповнена.",
+        "База розрахунку (Ціна / РРЦ): вкажіть «Ціна» (сума актуальних цін товарів) або «РРЦ» (сума старих цін / РРЦ товарів). При розрахунку від РРЦ у кожного товару в наборі обов'язково має бути заповнена стара ціна.",
         "Для масового видалення вивантажте реєстр: у ньому є окрема колонка «Видалити (Так)».",
     ]
     for row, instruction in enumerate(instructions, start=3):
@@ -385,22 +552,28 @@ class CatalogIndex:
                     CatalogProduct(
                         article=article,
                         article_for_display=normalize(raw.get("article_for_display")),
+                        price=parse_catalog_price(raw.get("price")),
+                        price_old=parse_catalog_price(raw.get("price_old")),
                     )
                 )
         return cls(products)
 
-    def resolve_display_article(self, display_article: str) -> tuple[str | None, str]:
+    def resolve_product(self, display_article: str) -> tuple[CatalogProduct | None, str]:
         exact = self.by_display.get(display_article, [])
         if len(exact) == 1:
-            return exact[0].article, ""
+            return exact[0], ""
         if len(exact) > 1:
             return None, f"Артикул відображення '{display_article}' не є унікальним."
         insensitive = self.by_display_folded.get(display_article.casefold(), [])
         if len(insensitive) == 1:
-            return insensitive[0].article, ""
+            return insensitive[0], ""
         if len(insensitive) > 1:
             return None, f"Артикул відображення '{display_article}' не є унікальним."
         return None, f"Артикул відображення '{display_article}' не знайдений у каталозі."
+
+    def resolve_display_article(self, display_article: str) -> tuple[str | None, str]:
+        product, error = self.resolve_product(display_article)
+        return (product.article if product else None), error
 
 
 def prepare_plan(rows: list[SetRow], catalog: CatalogIndex) -> list[PlanItem]:
@@ -433,25 +606,77 @@ def prepare_plan(rows: list[SetRow], catalog: CatalogIndex) -> list[PlanItem]:
                     sort_order=row.sort_order,
                     discount_percent=row.discount_percent,
                     currency=row.currency,
+                    price_base=row.price_base,
                 )
             )
             continue
 
         products: list[str] = []
+        resolved_products: list[tuple[str, CatalogProduct]] = []
         error = ""
         for display_article in row.display_articles:
-            product_article, error = catalog.resolve_display_article(display_article)
+            product, error = catalog.resolve_product(display_article)
             if error:
                 break
-            if product_article:
-                products.append(product_article)
+            if product:
+                products.append(product.article)
+                resolved_products.append((display_article, product))
         if not error and len(set(products)) != len(products):
             error = "Кілька артикулів відображення вказують на один товар."
+
+        discounted_price = row.discounted_price
+        base_price_sum: Decimal | None = None
+        price_base = row.price_base or PRICE_BASE_CURRENT
+
+        if not error and discounted_price is None:
+            try:
+                price_base = parse_price_base(row.price_base, default=PRICE_BASE_CURRENT)
+                discount_dec = parse_discount_percent(row.discount_percent)
+            except ValueError as calc_error:
+                error = str(calc_error)
+                discount_dec = None
+
+            if not error and discount_dec is None:
+                error = "Вкажіть кінцеву ціну або знижку у відсотках."
+            elif not error and discount_dec is not None:
+                if price_base == PRICE_BASE_RRC:
+                    missing_rrc = [
+                        disp for disp, prod in resolved_products if prod.price_old is None or prod.price_old <= 0
+                    ]
+                    if missing_rrc:
+                        quoted = ", ".join(f"'{disp}'" for disp in missing_rrc)
+                        noun = "товару" if len(missing_rrc) == 1 else "товарів"
+                        error = f"Для {noun} {quoted} у каталозі не вказана стара ціна (РРЦ)."
+                    else:
+                        base_price_sum = sum(
+                            (prod.price_old for _, prod in resolved_products if prod.price_old is not None),
+                            Decimal("0.00"),
+                        )
+                else:
+                    missing_price = [
+                        disp for disp, prod in resolved_products if prod.price is None or prod.price <= 0
+                    ]
+                    if missing_price:
+                        quoted = ", ".join(f"'{disp}'" for disp in missing_price)
+                        noun = "товару" if len(missing_price) == 1 else "товарів"
+                        error = f"Для {noun} {quoted} у каталозі не вказана актуальна ціна."
+                    else:
+                        base_price_sum = sum(
+                            (prod.price for _, prod in resolved_products if prod.price is not None),
+                            Decimal("0.00"),
+                        )
+
+                if not error and base_price_sum is not None:
+                    discounted_price = calculate_discounted_price(base_price_sum, discount_dec)
+                    if discounted_price <= 0:
+                        error = "Розрахована кінцева ціна набору має бути більшою за нуль."
+                        discounted_price = None
+
         plan.append(
             PlanItem(
                 article=row.article,
                 display_articles=row.display_articles,
-                discounted_price=row.discounted_price,
+                discounted_price=discounted_price if not error else row.discounted_price,
                 products=tuple(products) if not error else (),
                 row_number=row.row_number,
                 error=error,
@@ -461,6 +686,8 @@ def prepare_plan(rows: list[SetRow], catalog: CatalogIndex) -> list[PlanItem]:
                 sort_order=row.sort_order,
                 discount_percent=row.discount_percent,
                 currency=row.currency,
+                price_base=price_base,
+                base_price_sum=base_price_sum if not error else None,
             )
         )
     return plan
@@ -534,7 +761,7 @@ class HoroshopClient:
                     "token": self.token(),
                     "offset": offset,
                     "limit": DEFAULT_EXPORT_LIMIT,
-                    "includedParams": ["article_for_display"],
+                    "includedParams": ["article_for_display", "price", "price_old"],
                 },
             )
             nested = response.get("response")
@@ -605,11 +832,18 @@ def build_state_excel(entries: list[dict[str, Any]]) -> bytes:
     workbook = Workbook()
     worksheet = workbook.active
     worksheet.title = "Наборы"
-    headers = ["Артикул набору", "Артикули відображення товарів", "Кінцева ціна", "Видалити (Так)"]
+    headers = [
+        "Артикул набору",
+        "Артикули відображення товарів",
+        "Кінцева ціна",
+        "Видалити (Так)",
+        "Знижка %",
+        "База розрахунку (Ціна / РРЦ)",
+    ]
     worksheet.append(headers)
     worksheet.freeze_panes = "A2"
-    worksheet.auto_filter.ref = "A1:D1"
-    for column, width in {"A": 28, "B": 52, "C": 16, "D": 14}.items():
+    worksheet.auto_filter.ref = "A1:F1"
+    for column, width in {"A": 28, "B": 52, "C": 16, "D": 14, "E": 14, "F": 28}.items():
         worksheet.column_dimensions[column].width = width
     header_fill = PatternFill("solid", fgColor="166534")
     for cell in worksheet[1]:
@@ -617,16 +851,23 @@ def build_state_excel(entries: list[dict[str, Any]]) -> bytes:
         cell.fill = header_fill
         cell.alignment = Alignment(horizontal="center")
     for entry in entries:
+        discount_val = format_discount(entry.get("discount_percent"))
+        base_val = price_base_label(entry.get("price_base")) if discount_val else ""
         worksheet.append([
             entry.get("article", ""),
             "; ".join(entry.get("display_articles", [])),
             entry.get("discounted_price", ""),
             "",
+            discount_val,
+            base_val,
         ])
     for row in range(2, worksheet.max_row + 1):
         worksheet.cell(row=row, column=1).number_format = "@"
         worksheet.cell(row=row, column=2).number_format = "@"
         worksheet.cell(row=row, column=3).number_format = "0.00"
+        worksheet.cell(row=row, column=4).number_format = "@"
+        worksheet.cell(row=row, column=5).number_format = "0.##"
+        worksheet.cell(row=row, column=6).number_format = "@"
     output = io.BytesIO()
     workbook.save(output)
     workbook.close()
@@ -708,6 +949,7 @@ class StateStore:
     def record(self, item: PlanItem, status: str, message: str, source: str = "api") -> None:
         existing = self.get(item.article) or {}
         now = utc_now()
+        discount_str = format_discount(item.discount_percent)
         entry = {
             "article": item.article,
             "display_articles": list(item.display_articles),
@@ -717,7 +959,9 @@ class StateStore:
             "currency": item.currency or existing.get("currency", "UAH"),
             "enabled": item.enabled,
             "sort_order": item.sort_order,
-            "discount_percent": item.discount_percent,
+            "discount_percent": discount_str or None,
+            "price_base": item.price_base if discount_str else "",
+            "base_price_sum": str(item.base_price_sum) if item.base_price_sum is not None else "",
             "status": status,
             "message": message,
             "source": source,
