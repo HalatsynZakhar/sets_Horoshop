@@ -208,6 +208,8 @@ def parse_discount_percent(value: Any) -> Decimal | None:
     if value is None or isinstance(value, bool):
         return None
     text = normalize(value).replace("%", "").replace(" ", "").replace(",", ".")
+    if text.startswith("-"):
+        text = text[1:].strip()
     if not text:
         return None
     try:
@@ -351,7 +353,7 @@ def parse_optional_int(value: Any, label: str, minimum: int, maximum: int | None
     return parsed
 
 
-def _detect_excel_columns(header_row: tuple[Any, ...]) -> tuple[int, int, int]:
+def _detect_excel_columns(header_row: list[Any] | tuple[Any, ...]) -> tuple[int | None, int, int]:
     action_idx: int | None = None
     discount_idx: int | None = None
     price_base_idx: int | None = None
@@ -366,13 +368,72 @@ def _detect_excel_columns(header_row: tuple[Any, ...]) -> tuple[int, int, int]:
         elif any(word in header for word in ("база", "ррц", "тип ціни", "тип цены", "розрахунок", "розрахунку", "расчет", "расчёт", "base")):
             price_base_idx = idx
 
-    if discount_idx == 3 and action_idx is None:
-        return (5, 3, price_base_idx if price_base_idx is not None else 4)
+    if action_idx == 3:
+        return (
+            3,
+            discount_idx if discount_idx is not None else 4,
+            price_base_idx if price_base_idx is not None else 5,
+        )
     return (
-        action_idx if action_idx is not None else 3,
-        discount_idx if discount_idx is not None else 4,
-        price_base_idx if price_base_idx is not None else 5,
+        action_idx,
+        discount_idx if discount_idx is not None else 3,
+        price_base_idx if price_base_idx is not None else 4,
     )
+
+
+def _cell_value(cell: Any, is_discount: bool = False) -> Any:
+    if cell is None or not hasattr(cell, "value"):
+        return cell
+    value = cell.value
+    if (
+        is_discount
+        and isinstance(value, (int, float, Decimal))
+        and not isinstance(value, bool)
+        and "%" in str(getattr(cell, "number_format", "") or "")
+    ):
+        try:
+            dec = Decimal(str(value))
+            if Decimal("0") < abs(dec) < Decimal("1"):
+                return dec * Decimal("100")
+        except (InvalidOperation, ValueError):
+            pass
+    return value
+
+
+def _is_percent_cell(cell: Any) -> bool:
+    if cell is None:
+        return False
+    value = cell.value if hasattr(cell, "value") else cell
+    if isinstance(value, str) and "%" in value:
+        return True
+    if (
+        hasattr(cell, "number_format")
+        and "%" in str(getattr(cell, "number_format", "") or "")
+        and isinstance(value, (int, float, Decimal))
+        and not isinstance(value, bool)
+    ):
+        return True
+    return False
+
+
+def _is_header_row(row: tuple[Any, ...], row_number: int) -> bool:
+    col0 = normalize(row[0] if len(row) > 0 else "").casefold()
+    col1 = normalize(row[1] if len(row) > 1 else "").casefold()
+    col2 = normalize(row[2] if len(row) > 2 else "").casefold()
+    if col0 in {
+        "article",
+        "артикул",
+        "артикул набору",
+        "артикул набору (необов'язково)",
+        "артикул набора",
+    } or col0.startswith(("артикул набору", "артикул набора")):
+        return True
+    if row_number == 1 and ";" not in col1:
+        if any(word in col1 for word in ("артикул", "товар", "display", "product")):
+            return True
+        if any(word in col2 for word in ("ціна", "цена", "price", "знижка", "скидка")):
+            return True
+    return False
 
 
 def parse_excel_sets(
@@ -380,29 +441,42 @@ def parse_excel_sets(
     default_discount_percent: Decimal | None = None,
     default_price_base: str = PRICE_BASE_CURRENT,
 ) -> list[SetRow]:
-    workbook = load_workbook(io.BytesIO(data), read_only=True, data_only=True)
+    try:
+        workbook = load_workbook(io.BytesIO(data), read_only=True, data_only=True)
+    except Exception as error:
+        raise ValueError(
+            "Не вдалося прочитати Excel-файл. Переконайтеся, що це коректний файл .xlsx або .xlsm."
+        ) from error
     try:
         worksheet = workbook.worksheets[0]
         rows: list[SetRow] = []
         seen_articles: set[str] = set()
-        action_idx, discount_idx, price_base_idx = 3, 4, 5
+        action_idx: int | None = None
+        discount_idx, price_base_idx = 3, 4
         normalized_default_base = parse_price_base(default_price_base, default=PRICE_BASE_CURRENT)
-        for row_number, row in enumerate(worksheet.iter_rows(values_only=True), start=1):
-            if not row or all(value is None for value in row[:9]):
+        for row_number, cell_row in enumerate(worksheet.iter_rows(values_only=False), start=1):
+            if not cell_row:
+                continue
+            row = tuple(_cell_value(cell) for cell in cell_row)
+            if all(normalize(value) == "" for value in row[:9]):
                 continue
             article = normalize(row[0] if len(row) > 0 else "")
-            if article.casefold() in {
-                "article",
-                "артикул",
-                "артикул набору",
-                "артикул набору (необов'язково)",
-                "артикул набора",
-            }:
+            if _is_header_row(row, row_number):
                 action_idx, discount_idx, price_base_idx = _detect_excel_columns(row)
                 continue
             try:
-                raw_action = row[action_idx] if len(row) > action_idx else ""
-                action = parse_action(raw_action)
+                if action_idx is not None:
+                    raw_action = row[action_idx] if len(row) > action_idx else ""
+                    action = parse_action(raw_action)
+                else:
+                    col3_text = normalize(row[3] if len(row) > 3 else "").casefold()
+                    if col3_text in {"удалить", "delete", "да", "так", "yes"}:
+                        action = "delete"
+                    elif col3_text in {"принять на учет", "принять на учёт", "учет", "учёт", "register"}:
+                        action = "register"
+                    else:
+                        action = "upsert"
+
                 if action == "delete":
                     if not article:
                         raise ValueError("для видалення вкажіть артикул набору.")
@@ -419,9 +493,16 @@ def parse_excel_sets(
                     raise ValueError(f"артикул набору '{article}' повторюється.")
                 seen_articles.add(key)
 
-                raw_price = normalize(row[2] if len(row) > 2 else "")
-                raw_discount = row[discount_idx] if len(row) > discount_idx else None
+                price_cell = cell_row[2] if len(cell_row) > 2 else None
+                raw_price = normalize(_cell_value(price_cell))
+                discount_cell = cell_row[discount_idx] if len(cell_row) > discount_idx else None
+                raw_discount = _cell_value(discount_cell, is_discount=True)
                 raw_price_base = row[price_base_idx] if len(row) > price_base_idx else None
+
+                if _is_percent_cell(price_cell) and normalize(raw_discount) == "":
+                    raw_discount = _cell_value(price_cell, is_discount=True)
+                    raw_price = ""
+
                 row_discount = parse_discount_percent(raw_discount)
 
                 if raw_price:
@@ -434,10 +515,12 @@ def parse_excel_sets(
                     )
                 else:
                     price = None
-                    discount_percent = row_discount if row_discount is not None else default_discount_percent
+                    discount_percent = (
+                        row_discount
+                        if row_discount is not None
+                        else (default_discount_percent if default_discount_percent is not None else Decimal("0.00"))
+                    )
                     price_base = parse_price_base(raw_price_base, default=normalized_default_base)
-                    if discount_percent is None:
-                        raise ValueError("вкажіть кінцеву ціну або знижку у відсотках.")
 
                 title = ""
                 enabled = True
@@ -553,7 +636,9 @@ class CatalogIndex:
                         article=article,
                         article_for_display=normalize(raw.get("article_for_display")),
                         price=parse_catalog_price(raw.get("price")),
-                        price_old=parse_catalog_price(raw.get("price_old")),
+                        price_old=parse_catalog_price(
+                            raw.get("price_old") if raw.get("price_old") is not None else raw.get("old_price")
+                        ),
                     )
                 )
         return cls(products)
@@ -637,8 +722,8 @@ def prepare_plan(rows: list[SetRow], catalog: CatalogIndex) -> list[PlanItem]:
                 discount_dec = None
 
             if not error and discount_dec is None:
-                error = "Вкажіть кінцеву ціну або знижку у відсотках."
-            elif not error and discount_dec is not None:
+                discount_dec = Decimal("0.00")
+            if not error and discount_dec is not None:
                 if price_base == PRICE_BASE_RRC:
                     missing_rrc = [
                         disp for disp, prod in resolved_products if prod.price_old is None or prod.price_old <= 0

@@ -312,16 +312,39 @@ class HoroshopSetsTests(unittest.TestCase):
         self.assertEqual(rows[1].discounted_price, Decimal("320.00"))
         self.assertIsNone(rows[1].discount_percent)
 
-    def test_excel_requires_price_or_discount(self) -> None:
-        with self.assertRaisesRegex(ValueError, "вкажіть кінцеву ціну або знижку"):
-            parse_excel_sets(
-                self.excel_bytes(
-                    [
-                        ("Артикул набору", "Артикули відображення товарів", "Кінцева ціна"),
-                        ("SET-NO-PRICE", "A; B", None),
-                    ]
-                )
+    def test_excel_defaults_to_zero_discount_when_price_and_discount_are_blank(self) -> None:
+        rows = parse_excel_sets(
+            self.excel_bytes(
+                [
+                    ("Артикул набору", "Артикули відображення товарів", "Кінцева ціна"),
+                    ("SET-NO-PRICE", "A; B", None),
+                    ("   ", "   ", "   "),
+                ]
             )
+        )
+        self.assertEqual(len(rows), 1)
+        self.assertIsNone(rows[0].discounted_price)
+        self.assertEqual(rows[0].discount_percent, Decimal("0.00"))
+        self.assertEqual(rows[0].price_base, "current")
+
+    def test_excel_handles_percent_cells_negative_discount_and_3col_headers(self) -> None:
+        workbook = Workbook()
+        sheet = workbook.active
+        sheet.append(["Артикул набору", "Артикули відображення товарів", "Кінцева ціна"])
+        sheet.append(["SET-PCT-FMT", "A; B", None, 0.15, "РРЦ"])
+        sheet.cell(row=2, column=4).number_format = "0%"
+        sheet.append(["SET-NEG", "A; B", "-10%"])
+        output = io.BytesIO()
+        workbook.save(output)
+        workbook.close()
+
+        rows = parse_excel_sets(output.getvalue())
+        self.assertEqual(len(rows), 2)
+        self.assertIsNone(rows[0].discounted_price)
+        self.assertEqual(rows[0].discount_percent, Decimal("15.00"))
+        self.assertEqual(rows[0].price_base, "rrc")
+        self.assertIsNone(rows[1].discounted_price)
+        self.assertEqual(rows[1].discount_percent, Decimal("10.00"))
 
     def test_half_up_rounding_on_exact_half(self) -> None:
         catalog = CatalogIndex.from_raw(
