@@ -227,11 +227,15 @@ try {
     if (Test-Path (Join-Path $InstallDir ".git")) {
         $configBackup = Join-Path $env:TEMP "HoroshopSets-config-$PID.json"
         $stateBackup = Join-Path $env:TEMP "HoroshopSets-state-$PID.json"
+        $mappingsBackup = Join-Path $env:TEMP "HoroshopSets-mappings-$PID.json"
         if (Test-Path (Join-Path $InstallDir "config.json")) {
             Copy-Item (Join-Path $InstallDir "config.json") $configBackup -Force
         }
         if (Test-Path (Join-Path $InstallDir "data\sets_state.json")) {
             Copy-Item (Join-Path $InstallDir "data\sets_state.json") $stateBackup -Force
+        }
+        if (Test-Path (Join-Path $InstallDir "data\article_mappings.json")) {
+            Copy-Item (Join-Path $InstallDir "data\article_mappings.json") $mappingsBackup -Force
         }
         Stop-ExistingRuntime
         git -C $InstallDir fetch origin $Branch
@@ -250,6 +254,12 @@ try {
             Copy-Item $stateBackup (Join-Path $InstallDir "data\sets_state.json") -Force
             Remove-Item $stateBackup -Force -ErrorAction SilentlyContinue
             Write-Output "Restored local sets registry after code update."
+        }
+        if (Test-Path $mappingsBackup) {
+            New-Item -ItemType Directory -Path (Join-Path $InstallDir "data") -Force | Out-Null
+            Copy-Item $mappingsBackup (Join-Path $InstallDir "data\article_mappings.json") -Force
+            Remove-Item $mappingsBackup -Force -ErrorAction SilentlyContinue
+            Write-Output "Restored local article mappings database after code update."
         }
     }
     elseif (Test-Path $InstallDir) {

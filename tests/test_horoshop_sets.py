@@ -9,18 +9,25 @@ from pathlib import Path
 from openpyxl import Workbook, load_workbook
 
 from horoshop_sets import (
+    ArticleMappings,
     CatalogIndex,
     PlanItem,
     SetRow,
     Settings,
     StateStore,
     build_excel_template,
+    build_mappings_excel,
     build_state_excel,
     import_payload,
     import_results,
+    leading_zeros_count,
+    load_article_mappings,
     load_settings,
+    normalize_article_code,
+    parse_article_mappings,
     parse_excel_sets,
     prepare_plan,
+    save_article_mappings,
 )
 
 
@@ -380,6 +387,189 @@ class HoroshopSetsTests(unittest.TestCase):
         self.assertEqual(worksheet["E2"].value, "10")
         self.assertEqual(worksheet["F2"].value, "РРЦ")
         workbook.close()
+
+    def test_mappings_generate_cartesian_set_variations_with_site_display_articles(self) -> None:
+        catalog = CatalogIndex.from_raw(
+            [
+                {"article": "REAL-A1", "article_for_display": "SITE-A1", "price": 200, "price_old": 250},
+                {"article": "REAL-A2", "article_for_display": "SITE-A2", "price": 300, "price_old": 350},
+                {"article": "REAL-B1", "article_for_display": "SITE-B1", "price": 100, "price_old": 120},
+                {"article": "REAL-B2", "article_for_display": "SITE-B2", "price": 150, "price_old": 180},
+            ]
+        )
+        mappings = parse_article_mappings(
+            self.excel_bytes(
+                [
+                    ("Артикул", "Варіант 1", "Варіант 2"),
+                    ("SELLER-A", "SITE-A1", "SITE-A2"),
+                    ("SELLER-B", "SITE-B1", "SITE-B2"),
+                ]
+            )
+        )
+        rows = parse_excel_sets(
+            self.excel_bytes(
+                [
+                    (
+                        "Артикул набору (необов'язково)",
+                        "Артикули відображення товарів",
+                        "Кінцева ціна",
+                        "Знижка %",
+                        "База розрахунку (Ціна / РРЦ)",
+                    ),
+                    (None, "SELLER-A; SELLER-B", None, 10, "Ціна"),
+                ]
+            )
+        )
+        plan = prepare_plan(rows, catalog, normalize_articles=True, mappings=mappings)
+        self.assertEqual(len(plan), 4)
+        self.assertTrue(all(item.ready for item in plan))
+        self.assertEqual(
+            [item.article for item in plan],
+            ["SITE-A1.SITE-B1", "SITE-A1.SITE-B2", "SITE-A2.SITE-B1", "SITE-A2.SITE-B2"],
+        )
+        self.assertEqual(
+            [item.display_articles for item in plan],
+            [
+                ("SITE-A1", "SITE-B1"),
+                ("SITE-A1", "SITE-B2"),
+                ("SITE-A2", "SITE-B1"),
+                ("SITE-A2", "SITE-B2"),
+            ],
+        )
+        self.assertEqual(
+            [item.products for item in plan],
+            [
+                ("REAL-A1", "REAL-B1"),
+                ("REAL-A1", "REAL-B2"),
+                ("REAL-A2", "REAL-B1"),
+                ("REAL-A2", "REAL-B2"),
+            ],
+        )
+        # Sums: 300->270, 350->315, 400->360, 450->405
+        self.assertEqual(
+            [item.discounted_price for item in plan],
+            [Decimal("270"), Decimal("315"), Decimal("360"), Decimal("405")],
+        )
+
+    def test_mappings_support_internal_horoshop_articles_and_normalization(self) -> None:
+        catalog = CatalogIndex.from_raw(
+            [
+                {"article": "TECH/1 (A)", "article_for_display": "Visible-1", "price": 500},
+                {"article": "TECH-2", "article_for_display": "Display-2", "price": 300},
+            ]
+        )
+        mappings = parse_article_mappings(
+            self.excel_bytes(
+                [
+                    ("Постачальник", "Технічний"),
+                    ("SUP-1", "TECH/1 (A)"),
+                ]
+            )
+        )
+        row = SetRow("SUP-1.Display.2", ("SUP-1", "Display.2"), Decimal("700"), 2)
+        plan = prepare_plan([row], catalog, normalize_articles=True, mappings=mappings)
+        self.assertEqual(len(plan), 1)
+        self.assertTrue(plan[0].ready)
+        self.assertEqual(plan[0].article, "Visible-1.Display-2")
+        self.assertEqual(plan[0].display_articles, ("Visible-1", "Display-2"))
+        self.assertEqual(plan[0].products, ("TECH/1 (A)", "TECH-2"))
+
+    def test_reimporting_exported_registry_with_cluster_items_does_not_conflict(self) -> None:
+        catalog = CatalogIndex.from_raw(
+            [
+                {"article": "REAL-A1", "article_for_display": "SITE-A1", "price": 200},
+                {"article": "REAL-A2", "article_for_display": "SITE-A2", "price": 300},
+                {"article": "REAL-B", "article_for_display": "SITE-B", "price": 100},
+            ]
+        )
+        mappings = ArticleMappings(
+            {
+                "SITE-A1": ("SITE-A1", "SITE-A2"),
+                "SITE-A2": ("SITE-A2", "SITE-A1"),
+            }
+        )
+        rows = [
+            SetRow("SITE-A1.SITE-B", ("SITE-A1", "SITE-B"), Decimal("250"), 2),
+            SetRow("SITE-A2.SITE-B", ("SITE-A2", "SITE-B"), Decimal("350"), 3),
+        ]
+        plan = prepare_plan(rows, catalog, normalize_articles=True, mappings=mappings)
+        self.assertEqual(len(plan), 2)
+        self.assertTrue(all(item.ready for item in plan))
+        self.assertEqual([item.article for item in plan], ["SITE-A1.SITE-B", "SITE-A2.SITE-B"])
+        self.assertEqual([item.discounted_price for item in plan], [Decimal("250"), Decimal("350")])
+
+    def test_leading_zeros_preserved_and_protected_in_mappings_and_catalog(self) -> None:
+        self.assertEqual(normalize_article_code("04040"), "04040")
+        self.assertEqual(normalize_article_code("4040"), "4040")
+        self.assertEqual(leading_zeros_count("04040"), 1)
+        self.assertEqual(leading_zeros_count("4040"), 0)
+
+        with self.assertRaisesRegex(ValueError, "відрізняються лише початковими нулями"):
+            parse_article_mappings(
+                self.excel_bytes(
+                    [
+                        ("Варіант 1", "Варіант 2"),
+                        ("04040", "4040"),
+                    ]
+                )
+            )
+
+        catalog = CatalogIndex.from_raw(
+            [
+                {"article": "INT-04040", "article_for_display": "04040", "price": 100},
+            ]
+        )
+        prod_0, _ = catalog.resolve_product("04040", use_normalized=True)
+        prod_no_0, err = catalog.resolve_product("4040", use_normalized=True)
+        self.assertIsNotNone(prod_0)
+        self.assertIsNone(prod_no_0)
+        self.assertIn("не знайдений у каталозі", err)
+
+    def test_mappings_excel_roundtrip_and_server_clear_backup(self) -> None:
+        import asyncio
+        import sets_server
+
+        mappings = ArticleMappings(
+            {
+                "04040": ("04040", "UUID-04040"),
+                "UUID-04040": ("UUID-04040", "04040"),
+            }
+        )
+        excel_bytes = build_mappings_excel(mappings)
+        restored = parse_article_mappings(excel_bytes)
+        self.assertEqual(restored.targets_for("04040", False), ("04040", "UUID-04040"))
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            test_file = Path(temp_dir) / "data" / "article_mappings.json"
+            save_article_mappings(test_file, mappings)
+            original_file = sets_server.MAPPINGS_FILE
+            try:
+                sets_server.MAPPINGS_FILE = test_file
+                info_before = sets_server.mappings_info()
+                self.assertEqual(info_before["sources"], 2)
+                self.assertEqual(info_before["rules"], 4)
+
+                export_res = sets_server.export_mappings()
+                self.assertEqual(
+                    export_res.media_type,
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                )
+                self.assertTrue(len(export_res.body) > 0)
+
+                clear_res = asyncio.run(sets_server.clear_mappings())
+                self.assertEqual(clear_res["status"], "cleared")
+                self.assertTrue(clear_res["backup"].endswith(".bak"))
+
+                info_after = sets_server.mappings_info()
+                self.assertEqual(info_after["sources"], 0)
+                self.assertEqual(info_after["rules"], 0)
+
+                backup_path = test_file.parent / clear_res["backup"]
+                self.assertTrue(backup_path.exists())
+                backup_mappings = load_article_mappings(backup_path)
+                self.assertEqual(backup_mappings.targets_for("04040", False), ("04040", "UUID-04040"))
+            finally:
+                sets_server.MAPPINGS_FILE = original_file
 
 
 if __name__ == "__main__":

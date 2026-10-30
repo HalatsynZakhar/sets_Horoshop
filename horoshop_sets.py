@@ -8,6 +8,7 @@ import shutil
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
+from itertools import chain, product as cartesian_product
 from pathlib import Path
 from typing import Any
 from urllib.parse import urljoin
@@ -22,6 +23,19 @@ SET_TITLE = "Разом дешевше"
 PRICE_BASE_CURRENT = "current"
 PRICE_BASE_RRC = "rrc"
 PUBLIC_LOG_PATH_JSON_PATTERN = re.compile(r'("public_log_path"\s*:\s*")(?P<value>[^"]*)(")')
+MAPPING_HEADER_MARKERS = (
+    "артикул",
+    "article",
+    "варіант",
+    "вариант",
+    "variant",
+    "подартикул",
+    "підартикул",
+    "субартикул",
+    "source",
+    "target",
+    "ключ",
+)
 
 
 class HoroshopSetsError(RuntimeError):
@@ -103,7 +117,77 @@ def utc_now() -> str:
 
 
 def normalize(value: Any) -> str:
-    return "" if value is None else str(value).strip()
+    if value is None:
+        return ""
+    if isinstance(value, float) and not isinstance(value, bool) and value.is_integer():
+        return str(int(value))
+    return str(value).strip()
+
+
+def leading_zeros_count(text: str) -> int:
+    count = 0
+    for character in text:
+        if character == "0":
+            count += 1
+        else:
+            break
+    return count
+
+
+def normalize_article_code(value: Any) -> str:
+    text = normalize(value)
+    if not text:
+        return ""
+    raw_alpha = "".join(character if character.isalnum() else "-" for character in text).strip("-")
+    zeros = leading_zeros_count(raw_alpha)
+    cleaned = re.sub(r"-{2,}", "-", raw_alpha)
+    if zeros > 0 and not cleaned.startswith("0" * zeros):
+        cleaned = ("0" * zeros) + cleaned.lstrip("0")
+    return cleaned
+
+
+@dataclass(frozen=True)
+class ArticleMappings:
+    entries: dict[str, tuple[str, ...]]
+
+    @classmethod
+    def empty(cls) -> "ArticleMappings":
+        return cls({})
+
+    def merged_with(self, other: "ArticleMappings") -> "ArticleMappings":
+        combined = {source: list(targets) for source, targets in self.entries.items()}
+        for source, targets in other.entries.items():
+            combined.setdefault(source, []).extend(targets)
+        result: dict[str, tuple[str, ...]] = {}
+        for source, targets in combined.items():
+            deduped = tuple(dict.fromkeys(targets))
+            if any(target.casefold() != source.casefold() for target in deduped):
+                result[source] = deduped
+        return ArticleMappings(result)
+
+    def targets_for(self, article: str, use_normalized: bool) -> tuple[str, ...]:
+        if not self.entries:
+            return (article,)
+        exact = self.entries.get(article)
+        if exact:
+            return exact
+        folded = article.casefold()
+        folded_matches = [targets for source, targets in self.entries.items() if source.casefold() == folded]
+        if len(folded_matches) == 1:
+            return folded_matches[0]
+        if use_normalized:
+            norm_article = normalize_article_code(article)
+            zeros = leading_zeros_count(norm_article)
+            normalized = norm_article.casefold()
+            normalized_matches = [
+                targets
+                for source, targets in self.entries.items()
+                if normalize_article_code(source).casefold() == normalized
+                and leading_zeros_count(normalize_article_code(source)) == zeros
+            ]
+            if len(normalized_matches) == 1:
+                return normalized_matches[0]
+        return (article,)
 
 
 def endpoint_url(domain: str, endpoint: str) -> str:
@@ -609,19 +693,218 @@ def build_excel_template() -> bytes:
     return output.getvalue()
 
 
+def header_key(value: Any) -> str:
+    return " ".join(normalize(value).casefold().split())
+
+
+def mapping_column_indexes(headers: tuple[Any, ...]) -> tuple[int, ...]:
+    indexes = tuple(index for index, value in enumerate(headers) if normalize(value))
+    if len(indexes) < 2:
+        raise ValueError("У файлі сопоставлень має бути мінімум два стовпці з варіантами артикула.")
+    return indexes
+
+
+def is_mapping_header(row: tuple[Any, ...]) -> bool:
+    return any(marker in header_key(value) for value in row for marker in MAPPING_HEADER_MARKERS)
+
+
+def parse_article_mappings(data: bytes) -> ArticleMappings:
+    try:
+        workbook = load_workbook(io.BytesIO(data), read_only=True, data_only=True)
+    except Exception as error:
+        raise ValueError(
+            "Не вдалося прочитати файл сопоставлень. Переконайтеся, що це коректний файл .xlsx або .xlsm."
+        ) from error
+    try:
+        worksheet = workbook.worksheets[0]
+        iterator = worksheet.iter_rows(values_only=True)
+        try:
+            first_row = next(iterator)
+        except StopIteration as error:
+            raise ValueError("Файл сопоставлень порожній.") from error
+        has_header = is_mapping_header(first_row)
+        if has_header:
+            column_indexes = mapping_column_indexes(first_row)
+            rows = iterator
+            start_row = 2
+        else:
+            column_indexes = tuple(range(len(first_row)))
+            rows = chain((first_row,), iterator)
+            start_row = 1
+        mappings: dict[str, list[str]] = {}
+        for row_number, row in enumerate(rows, start=start_row):
+            if not row or all(value is None for value in row):
+                continue
+            if has_header:
+                raw_articles = [
+                    normalize(row[index] if index < len(row) else None)
+                    for index in column_indexes
+                    if normalize(row[index] if index < len(row) else None)
+                ]
+            else:
+                raw_articles = [normalize(value) for value in row if normalize(value)]
+            unique_articles: list[str] = list(dict.fromkeys(raw_articles))
+            if len(unique_articles) < 2:
+                continue
+            if len({a.casefold() for a in unique_articles}) < 2:
+                continue
+            for i in range(len(unique_articles)):
+                for j in range(i + 1, len(unique_articles)):
+                    a, b = unique_articles[i], unique_articles[j]
+                    if a.lstrip("0") == b.lstrip("0") and a != b:
+                        raise ValueError(
+                            f"Рядок {row_number}: артикули «{a}» та «{b}» відрізняються лише початковими нулями (це різні бренди/товари). "
+                            f"Їх заборонено зіставляти один з одним."
+                        )
+            for source in unique_articles:
+                mappings.setdefault(source, []).extend(unique_articles)
+
+        final_entries: dict[str, tuple[str, ...]] = {}
+        for source, targets in mappings.items():
+            deduped = tuple(dict.fromkeys(targets))
+            if any(target.casefold() != source.casefold() for target in deduped):
+                final_entries[source] = deduped
+
+        if not final_entries:
+            raise ValueError(
+                "У файлі сопоставлень немає жодного корисного правила (усі рядки порожні, містять лише один артикул або однакові значення)."
+            )
+        return ArticleMappings(final_entries)
+    finally:
+        workbook.close()
+
+
+def load_article_mappings(path: Path) -> ArticleMappings:
+    if not path.exists():
+        return ArticleMappings.empty()
+    try:
+        raw_entries = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise HoroshopSetsError(f"Не вдалося прочитати базу сопоставлень: {path}.") from error
+    if not isinstance(raw_entries, dict):
+        raise HoroshopSetsError("База сопоставлень має некоректний формат.")
+    entries: dict[str, tuple[str, ...]] = {}
+    for source, targets in raw_entries.items():
+        source_article = normalize(source)
+        if not source_article or not isinstance(targets, list):
+            raise HoroshopSetsError("База сопоставлень має некоректний формат.")
+        target_articles = tuple(dict.fromkeys(normalize(target) for target in targets if normalize(target)))
+        if not target_articles:
+            raise HoroshopSetsError("База сопоставлень має некоректний формат.")
+        if any(target.casefold() != source_article.casefold() for target in target_articles):
+            entries[source_article] = target_articles
+    return ArticleMappings(entries)
+
+
+def save_article_mappings(path: Path, mappings: ArticleMappings) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    serialized = {source: list(targets) for source, targets in mappings.entries.items()}
+    temporary_path = path.with_suffix(path.suffix + ".tmp")
+    try:
+        temporary_path.write_text(json.dumps(serialized, ensure_ascii=False, indent=2), encoding="utf-8")
+        temporary_path.replace(path)
+    except OSError as error:
+        raise HoroshopSetsError(f"Не вдалося зберегти базу сопоставлень: {path}.") from error
+
+
+def extract_clusters(mappings: ArticleMappings) -> list[list[str]]:
+    visited: set[str] = set()
+    clusters: list[list[str]] = []
+    for source in sorted(mappings.entries.keys()):
+        if source in visited:
+            continue
+        cluster: list[str] = []
+        queue = [source]
+        visited.add(source)
+        while queue:
+            current = queue.pop(0)
+            cluster.append(current)
+            for target in mappings.entries.get(current, ()):
+                if target not in visited:
+                    visited.add(target)
+                    queue.append(target)
+        if len(cluster) >= 2:
+            clusters.append(sorted(cluster))
+    clusters.sort(key=lambda item: item[0])
+    return clusters
+
+
+def _style_mappings_header(worksheet: Any) -> None:
+    header_fill = PatternFill("solid", fgColor="166534")
+    for cell in worksheet[1]:
+        cell.font = Font(bold=True, color="FFFFFF")
+        cell.fill = header_fill
+        cell.alignment = Alignment(horizontal="center")
+
+
+def build_mappings_excel(mappings: ArticleMappings) -> bytes:
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "Таблиця сопоставлень"
+
+    clusters = extract_clusters(mappings)
+    max_cols = max((len(item) for item in clusters), default=2)
+    max_cols = max(max_cols, 2)
+
+    headers = [f"Артикул {index}" for index in range(1, max_cols + 1)]
+    sheet.append(headers)
+    sheet.freeze_panes = "A2"
+    sheet.auto_filter.ref = f"A1:{sheet.cell(row=1, column=len(headers)).coordinate}"
+    _style_mappings_header(sheet)
+
+    for row_index, cluster in enumerate(clusters, start=2):
+        row_values = list(cluster) + [""] * (max_cols - len(cluster))
+        sheet.append(row_values)
+        for column_index in range(1, max_cols + 1):
+            sheet.cell(row=row_index, column=column_index).number_format = "@"
+
+    for column_index in range(1, max_cols + 1):
+        column_letter = sheet.cell(row=1, column=column_index).column_letter
+        sheet.column_dimensions[column_letter].width = 30
+
+    register_sheet = workbook.create_sheet("Повний реєстр")
+    register_headers = ["Пошуковий артикул", "Кількість відповідностей", "Всі відповідні артикули"]
+    register_sheet.append(register_headers)
+    register_sheet.freeze_panes = "A2"
+    register_sheet.auto_filter.ref = "A1:C1"
+    _style_mappings_header(register_sheet)
+
+    for row_index, (source, targets) in enumerate(sorted(mappings.entries.items()), start=2):
+        register_sheet.append([source, len(targets), ", ".join(targets)])
+        register_sheet.cell(row=row_index, column=1).number_format = "@"
+        register_sheet.cell(row=row_index, column=3).number_format = "@"
+
+    register_sheet.column_dimensions["A"].width = 28
+    register_sheet.column_dimensions["B"].width = 24
+    register_sheet.column_dimensions["C"].width = 60
+
+    output = io.BytesIO()
+    workbook.save(output)
+    workbook.close()
+    return output.getvalue()
+
+
 class CatalogIndex:
     def __init__(self, products: list[CatalogProduct]):
         self.products = products
         self.product_articles = {product.article for product in products}
+        self.by_article = {product.article: product for product in products}
+        self.by_article_folded: dict[str, list[CatalogProduct]] = {}
         self.by_display: dict[str, list[CatalogProduct]] = {}
         self.by_display_folded: dict[str, list[CatalogProduct]] = {}
+        self.by_normalized: dict[str, list[CatalogProduct]] = {}
         for product in products:
-            if not product.article_for_display:
-                continue
-            self.by_display.setdefault(product.article_for_display, []).append(product)
-            self.by_display_folded.setdefault(
-                product.article_for_display.casefold(), []
-            ).append(product)
+            if product.article:
+                self.by_article_folded.setdefault(product.article.casefold(), []).append(product)
+            if product.article_for_display:
+                self.by_display.setdefault(product.article_for_display, []).append(product)
+                self.by_display_folded.setdefault(
+                    product.article_for_display.casefold(), []
+                ).append(product)
+            for key in {product.article, product.article_for_display} - {""}:
+                normalized = normalize_article_code(key)
+                if normalized:
+                    self.by_normalized.setdefault(normalized.casefold(), []).append(product)
 
     @classmethod
     def from_raw(cls, raw_products: list[dict[str, Any]]) -> "CatalogIndex":
@@ -643,26 +926,141 @@ class CatalogIndex:
                 )
         return cls(products)
 
-    def resolve_product(self, display_article: str) -> tuple[CatalogProduct | None, str]:
-        exact = self.by_display.get(display_article, [])
+    def resolve_product(self, display_article: str, use_normalized: bool = False) -> tuple[CatalogProduct | None, str]:
+        exact = list({item.article: item for item in self.by_display.get(display_article, [])}.values())
         if len(exact) == 1:
             return exact[0], ""
         if len(exact) > 1:
             return None, f"Артикул відображення '{display_article}' не є унікальним."
-        insensitive = self.by_display_folded.get(display_article.casefold(), [])
+        insensitive = list({item.article: item for item in self.by_display_folded.get(display_article.casefold(), [])}.values())
         if len(insensitive) == 1:
             return insensitive[0], ""
         if len(insensitive) > 1:
             return None, f"Артикул відображення '{display_article}' не є унікальним."
+        if display_article in self.by_article:
+            return self.by_article[display_article], ""
+        internal_folded = list({item.article: item for item in self.by_article_folded.get(display_article.casefold(), [])}.values())
+        if len(internal_folded) == 1:
+            return internal_folded[0], ""
+        if len(internal_folded) > 1:
+            return None, f"Артикул '{display_article}' не є унікальним."
+        if use_normalized:
+            norm_val = normalize_article_code(display_article)
+            zeros = leading_zeros_count(norm_val)
+            normalized = norm_val.casefold()
+            candidates = self.by_normalized.get(normalized, [])
+            valid_candidates = []
+            for item in candidates:
+                for key in {item.article, item.article_for_display} - {""}:
+                    norm_k = normalize_article_code(key)
+                    if norm_k.casefold() == normalized and leading_zeros_count(norm_k) == zeros:
+                        valid_candidates.append(item)
+                        break
+            normalized_matches = list({item.article: item for item in valid_candidates}.values())
+            if len(normalized_matches) == 1:
+                return normalized_matches[0], ""
+            if len(normalized_matches) > 1:
+                return None, f"Нормалізований артикул '{norm_val}' для '{display_article}' не є унікальним."
         return None, f"Артикул відображення '{display_article}' не знайдений у каталозі."
 
-    def resolve_display_article(self, display_article: str) -> tuple[str | None, str]:
-        product, error = self.resolve_product(display_article)
+    def resolve_display_article(self, display_article: str, use_normalized: bool = False) -> tuple[str | None, str]:
+        product, error = self.resolve_product(display_article, use_normalized=use_normalized)
         return (product.article if product else None), error
 
+    def resolve_variants(
+        self,
+        display_article: str,
+        use_normalized: bool = False,
+        mappings: ArticleMappings | None = None,
+    ) -> tuple[list[CatalogProduct], str]:
+        targets = mappings.targets_for(display_article, use_normalized) if mappings is not None else (display_article,)
+        matched: list[CatalogProduct] = []
+        seen_articles: set[str] = set()
+        resolution_errors: list[str] = []
+        for target_article in targets:
+            product, error = self.resolve_product(target_article, use_normalized=use_normalized)
+            if product is not None:
+                if product.article not in seen_articles:
+                    seen_articles.add(product.article)
+                    matched.append(product)
+            elif error and "не знайдений у каталозі" not in error:
+                resolution_errors.append(error)
+        if matched:
+            return matched, ""
+        if resolution_errors:
+            return [], resolution_errors[0]
+        if len(targets) > 1:
+            return [], f"Жоден варіант артикула для '{display_article}' не знайдений у каталозі."
+        return [], f"Артикул відображення '{display_article}' не знайдений у каталозі."
 
-def prepare_plan(rows: list[SetRow], catalog: CatalogIndex) -> list[PlanItem]:
+
+def _calculate_combo_price(
+    row: SetRow,
+    resolved_products: list[tuple[str, CatalogProduct]],
+) -> tuple[Decimal | None, Decimal | None, str, str]:
+    discounted_price = row.discounted_price
+    base_price_sum: Decimal | None = None
+    price_base = row.price_base or PRICE_BASE_CURRENT
+    error = ""
+
+    if discounted_price is None:
+        try:
+            price_base = parse_price_base(row.price_base, default=PRICE_BASE_CURRENT)
+            discount_dec = parse_discount_percent(row.discount_percent)
+        except ValueError as calc_error:
+            error = str(calc_error)
+            discount_dec = None
+
+        if not error and discount_dec is None:
+            discount_dec = Decimal("0.00")
+        if not error and discount_dec is not None:
+            if price_base == PRICE_BASE_RRC:
+                missing_rrc = [
+                    disp for disp, prod in resolved_products if prod.price_old is None or prod.price_old <= 0
+                ]
+                if missing_rrc:
+                    quoted = ", ".join(f"'{disp}'" for disp in missing_rrc)
+                    noun = "товару" if len(missing_rrc) == 1 else "товарів"
+                    error = f"Для {noun} {quoted} у каталозі не вказана стара ціна (РРЦ)."
+                else:
+                    base_price_sum = sum(
+                        (prod.price_old for _, prod in resolved_products if prod.price_old is not None),
+                        Decimal("0.00"),
+                    )
+            else:
+                missing_price = [
+                    disp for disp, prod in resolved_products if prod.price is None or prod.price <= 0
+                ]
+                if missing_price:
+                    quoted = ", ".join(f"'{disp}'" for disp in missing_price)
+                    noun = "товару" if len(missing_price) == 1 else "товарів"
+                    error = f"Для {noun} {quoted} у каталозі не вказана актуальна ціна."
+                else:
+                    base_price_sum = sum(
+                        (prod.price for _, prod in resolved_products if prod.price is not None),
+                        Decimal("0.00"),
+                    )
+
+            if not error and base_price_sum is not None:
+                discounted_price = calculate_discounted_price(base_price_sum, discount_dec)
+                if discounted_price <= 0:
+                    error = "Розрахована кінцева ціна набору має бути більшою за нуль."
+                    discounted_price = None
+
+    return discounted_price, base_price_sum, price_base, error
+
+
+def prepare_plan(
+    rows: list[SetRow],
+    catalog: CatalogIndex,
+    normalize_articles: bool = False,
+    mappings: ArticleMappings | None = None,
+) -> list[PlanItem]:
     plan: list[PlanItem] = []
+    active_mappings = mappings or ArticleMappings.empty()
+    explicit_row_articles = {row.article.casefold() for row in rows if row.action != "delete" and row.article}
+    seen_plan_articles: set[str] = set()
+
     for row in rows:
         if row.action == "delete":
             plan.append(
@@ -696,85 +1094,122 @@ def prepare_plan(rows: list[SetRow], catalog: CatalogIndex) -> list[PlanItem]:
             )
             continue
 
-        products: list[str] = []
-        resolved_products: list[tuple[str, CatalogProduct]] = []
+        candidates_per_position: list[list[CatalogProduct]] = []
         error = ""
         for display_article in row.display_articles:
-            product, error = catalog.resolve_product(display_article)
+            variants, error = catalog.resolve_variants(
+                display_article,
+                use_normalized=normalize_articles,
+                mappings=active_mappings,
+            )
             if error:
                 break
-            if product:
-                products.append(product.article)
-                resolved_products.append((display_article, product))
-        if not error and len(set(products)) != len(products):
-            error = "Кілька артикулів відображення вказують на один товар."
+            candidates_per_position.append(variants)
 
-        discounted_price = row.discounted_price
-        base_price_sum: Decimal | None = None
-        price_base = row.price_base or PRICE_BASE_CURRENT
-
-        if not error and discounted_price is None:
-            try:
-                price_base = parse_price_base(row.price_base, default=PRICE_BASE_CURRENT)
-                discount_dec = parse_discount_percent(row.discount_percent)
-            except ValueError as calc_error:
-                error = str(calc_error)
-                discount_dec = None
-
-            if not error and discount_dec is None:
-                discount_dec = Decimal("0.00")
-            if not error and discount_dec is not None:
-                if price_base == PRICE_BASE_RRC:
-                    missing_rrc = [
-                        disp for disp, prod in resolved_products if prod.price_old is None or prod.price_old <= 0
-                    ]
-                    if missing_rrc:
-                        quoted = ", ".join(f"'{disp}'" for disp in missing_rrc)
-                        noun = "товару" if len(missing_rrc) == 1 else "товарів"
-                        error = f"Для {noun} {quoted} у каталозі не вказана стара ціна (РРЦ)."
-                    else:
-                        base_price_sum = sum(
-                            (prod.price_old for _, prod in resolved_products if prod.price_old is not None),
-                            Decimal("0.00"),
-                        )
-                else:
-                    missing_price = [
-                        disp for disp, prod in resolved_products if prod.price is None or prod.price <= 0
-                    ]
-                    if missing_price:
-                        quoted = ", ".join(f"'{disp}'" for disp in missing_price)
-                        noun = "товару" if len(missing_price) == 1 else "товарів"
-                        error = f"Для {noun} {quoted} у каталозі не вказана актуальна ціна."
-                    else:
-                        base_price_sum = sum(
-                            (prod.price for _, prod in resolved_products if prod.price is not None),
-                            Decimal("0.00"),
-                        )
-
-                if not error and base_price_sum is not None:
-                    discounted_price = calculate_discounted_price(base_price_sum, discount_dec)
-                    if discounted_price <= 0:
-                        error = "Розрахована кінцева ціна набору має бути більшою за нуль."
-                        discounted_price = None
-
-        plan.append(
-            PlanItem(
-                article=row.article,
-                display_articles=row.display_articles,
-                discounted_price=discounted_price if not error else row.discounted_price,
-                products=tuple(products) if not error else (),
-                row_number=row.row_number,
-                error=error,
-                action=row.action,
-                title=row.title,
-                enabled=row.enabled,
-                sort_order=row.sort_order,
-                discount_percent=row.discount_percent,
-                currency=row.currency,
-                price_base=price_base,
-                base_price_sum=base_price_sum if not error else None,
+        if error:
+            plan.append(
+                PlanItem(
+                    article=row.article,
+                    display_articles=row.display_articles,
+                    discounted_price=row.discounted_price,
+                    products=(),
+                    row_number=row.row_number,
+                    error=error,
+                    action=row.action,
+                    title=row.title,
+                    enabled=row.enabled,
+                    sort_order=row.sort_order,
+                    discount_percent=row.discount_percent,
+                    currency=row.currency,
+                    price_base=row.price_base or PRICE_BASE_CURRENT,
+                )
             )
-        )
+            continue
+
+        all_combos = list(cartesian_product(*candidates_per_position))
+        valid_combos = [
+            combo for combo in all_combos if len({prod.article for prod in combo}) == len(combo)
+        ]
+        if not valid_combos:
+            plan.append(
+                PlanItem(
+                    article=row.article,
+                    display_articles=row.display_articles,
+                    discounted_price=row.discounted_price,
+                    products=(),
+                    row_number=row.row_number,
+                    error="Кілька артикулів відображення вказують на один товар.",
+                    action=row.action,
+                    title=row.title,
+                    enabled=row.enabled,
+                    sort_order=row.sort_order,
+                    discount_percent=row.discount_percent,
+                    currency=row.currency,
+                    price_base=row.price_base or PRICE_BASE_CURRENT,
+                )
+            )
+            continue
+
+        is_custom_article = bool(row.article) and row.article != build_set_article(row.display_articles)
+        prepared_variations: list[tuple[tuple[CatalogProduct, ...], tuple[str, ...], str]] = []
+        for combo in valid_combos:
+            combo_display_articles = tuple(prod.article_for_display or prod.article for prod in combo)
+            if len(valid_combos) == 1 and is_custom_article:
+                combo_article = row.article
+            else:
+                combo_article = build_set_article(combo_display_articles)
+            prepared_variations.append((combo, combo_display_articles, combo_article))
+
+        if len(prepared_variations) > 1:
+            filtered = [
+                (combo, disp, art)
+                for combo, disp, art in prepared_variations
+                if art.casefold() == row.article.casefold()
+                or (art.casefold() not in explicit_row_articles and art.casefold() not in seen_plan_articles)
+            ]
+            if filtered:
+                prepared_variations = filtered
+            else:
+                prepared_variations = [prepared_variations[0]]
+
+        for combo, combo_display_articles, combo_article in prepared_variations:
+            combo_products = tuple(prod.article for prod in combo)
+            resolved_pairs = list(zip(combo_display_articles, combo))
+            combo_error = ""
+            discounted_price = row.discounted_price
+            base_price_sum: Decimal | None = None
+            price_base = row.price_base or PRICE_BASE_CURRENT
+
+            if combo_article.casefold() in seen_plan_articles:
+                combo_error = f"Артикул набору '{combo_article}' повторюється."
+            elif combo_article in catalog.product_articles:
+                combo_error = "Артикул набору збігається з артикулом наявного товару."
+            else:
+                discounted_price, base_price_sum, price_base, combo_error = _calculate_combo_price(
+                    row, resolved_pairs
+                )
+
+            if not combo_error:
+                seen_plan_articles.add(combo_article.casefold())
+
+            plan.append(
+                PlanItem(
+                    article=combo_article,
+                    display_articles=combo_display_articles,
+                    discounted_price=discounted_price if not combo_error else row.discounted_price,
+                    products=combo_products if not combo_error else (),
+                    row_number=row.row_number,
+                    error=combo_error,
+                    action=row.action,
+                    title=row.title,
+                    enabled=row.enabled,
+                    sort_order=row.sort_order,
+                    discount_percent=row.discount_percent,
+                    currency=row.currency,
+                    price_base=price_base,
+                    base_price_sum=base_price_sum if not combo_error else None,
+                )
+            )
     return plan
 
 

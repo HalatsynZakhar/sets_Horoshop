@@ -124,7 +124,7 @@ function Backup-LocalData {
     $backupDir = Join-Path ([System.IO.Path]::GetTempPath()) ("HoroshopSets-update-" + [Guid]::NewGuid().ToString("N"))
     New-Item -ItemType Directory -Path $backupDir -Force | Out-Null
 
-    foreach ($relativePath in @("config.json", "data\sets_state.json")) {
+    foreach ($relativePath in @("config.json", "data\sets_state.json", "data\article_mappings.json")) {
         $source = Join-Path $AppDir $relativePath
         if (Test-Path $source) {
             $target = Join-Path $backupDir $relativePath
@@ -138,7 +138,7 @@ function Backup-LocalData {
 function Restore-LocalData {
     param([string]$BackupDir)
 
-    foreach ($relativePath in @("config.json", "data\sets_state.json")) {
+    foreach ($relativePath in @("config.json", "data\sets_state.json", "data\article_mappings.json")) {
         $source = Join-Path $BackupDir $relativePath
         if (Test-Path $source) {
             $target = Join-Path $AppDir $relativePath

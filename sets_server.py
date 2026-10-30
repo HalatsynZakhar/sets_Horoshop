@@ -14,6 +14,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 
 from horoshop_sets import (
+    ArticleMappings,
     CatalogIndex,
     Credentials,
     HoroshopClient,
@@ -25,19 +26,23 @@ from horoshop_sets import (
     Settings,
     StateStore,
     build_excel_template,
+    build_mappings_excel,
     build_set_article,
     build_state_excel,
     format_discount,
     import_payload,
     import_results,
+    load_article_mappings,
     load_settings,
     normalize,
+    parse_article_mappings,
     parse_discount_percent,
     parse_excel_sets,
     parse_price,
     parse_price_base,
     prepare_plan,
     remove_results,
+    save_article_mappings,
     split_display_articles,
 )
 
@@ -45,10 +50,12 @@ from horoshop_sets import (
 PROJECT_DIR = Path(__file__).resolve().parent
 CONFIG_FILE = PROJECT_DIR / "config.json"
 MAX_UPLOAD_BYTES = 20 * 1024 * 1024
+MAPPINGS_FILE = PROJECT_DIR / "data" / "article_mappings.json"
 
 settings: Settings | None = None
 state_store: StateStore | None = None
 state_lock = threading.Lock()
+mapping_lock = threading.Lock()
 logger = logging.getLogger(__name__)
 service_output_stream: "PublicLogStream | None" = None
 
@@ -131,6 +138,41 @@ def ensure_config_file() -> None:
     print(f"Created configuration file from template: {CONFIG_FILE}")
 
 
+def parse_flag(value: Any, default: bool = False) -> bool:
+    text = normalize(value).casefold()
+    if not text:
+        return default
+    return text not in {"0", "false", "ні", "нет", "no", "off"}
+
+
+def stored_mappings() -> ArticleMappings:
+    with mapping_lock:
+        return load_article_mappings(MAPPINGS_FILE)
+
+
+def add_to_stored_mappings(uploaded: ArticleMappings) -> ArticleMappings:
+    with mapping_lock:
+        combined = load_article_mappings(MAPPINGS_FILE).merged_with(uploaded)
+        save_article_mappings(MAPPINGS_FILE, combined)
+        return combined
+
+
+async def uploaded_mappings(form: Any) -> ArticleMappings | None:
+    mapping_file = form.get("mapping_file")
+    if (
+        mapping_file is None
+        or not hasattr(mapping_file, "read")
+        or not normalize(getattr(mapping_file, "filename", ""))
+    ):
+        return None
+    if not str(getattr(mapping_file, "filename", "")).lower().endswith((".xlsx", ".xlsm")):
+        raise HoroshopSetsError("Файл сопоставлень має бути .xlsx або .xlsm.")
+    mapping_contents = await mapping_file.read()
+    if not mapping_contents or len(mapping_contents) > MAX_UPLOAD_BYTES:
+        raise HoroshopSetsError("Файл сопоставлень порожній або перевищує 20 МБ.")
+    return await asyncio.to_thread(parse_article_mappings, mapping_contents)
+
+
 def credentials_from_form(form: Any) -> Credentials:
     login = str(form.get("login", "")).strip()
     password = str(form.get("password", "")).strip()
@@ -140,7 +182,9 @@ def credentials_from_form(form: Any) -> Credentials:
     return Credentials(login=login, password=password, token=token)
 
 
-async def upload_bytes(request: Request) -> tuple[bytes, Credentials, Decimal | None, str]:
+async def upload_bytes(
+    request: Request,
+) -> tuple[bytes, Credentials, Decimal | None, str, bool, ArticleMappings]:
     form = await request.form()
     uploaded = form.get("file")
     if uploaded is None or not hasattr(uploaded, "read"):
@@ -155,7 +199,19 @@ async def upload_bytes(request: Request) -> tuple[bytes, Credentials, Decimal | 
         raise HoroshopSetsError("Excel-файл перевищує обмеження 20 МБ.")
     default_discount = parse_discount_percent(form.get("discount_percent", ""))
     default_price_base = parse_price_base(form.get("price_base", ""), default=PRICE_BASE_CURRENT)
-    return contents, credentials_from_form(form), default_discount, default_price_base
+    normalize_articles = parse_flag(form.get("normalize_articles"), True)
+    mappings = stored_mappings()
+    additional_mappings = await uploaded_mappings(form)
+    if additional_mappings is not None:
+        mappings = await asyncio.to_thread(add_to_stored_mappings, additional_mappings)
+    return (
+        contents,
+        credentials_from_form(form),
+        default_discount,
+        default_price_base,
+        normalize_articles,
+        mappings,
+    )
 
 
 def serialise_item(item: PlanItem) -> dict[str, Any]:
@@ -184,6 +240,8 @@ def create_plan(
     credentials: Credentials,
     default_discount_percent: Decimal | None = None,
     default_price_base: str = PRICE_BASE_CURRENT,
+    normalize_articles: bool = True,
+    mappings: ArticleMappings | None = None,
 ) -> tuple[list[PlanItem], HoroshopClient]:
     runtime_settings, _ = get_runtime()
     rows = parse_excel_sets(
@@ -197,7 +255,16 @@ def create_plan(
         if any(row.action != "delete" for row in rows)
         else CatalogIndex([])
     )
-    return prepare_plan(rows, catalog), client
+    active_mappings = mappings if mappings is not None else stored_mappings()
+    return (
+        prepare_plan(
+            rows,
+            catalog,
+            normalize_articles=normalize_articles,
+            mappings=active_mappings,
+        ),
+        client,
+    )
 
 
 def preview_excel(
@@ -205,12 +272,16 @@ def preview_excel(
     credentials: Credentials,
     default_discount_percent: Decimal | None = None,
     default_price_base: str = PRICE_BASE_CURRENT,
+    normalize_articles: bool = True,
+    mappings: ArticleMappings | None = None,
 ) -> dict[str, Any]:
     plan, _ = create_plan(
         contents,
         credentials,
         default_discount_percent=default_discount_percent,
         default_price_base=default_price_base,
+        normalize_articles=normalize_articles,
+        mappings=mappings,
     )
     return {
         "items": [serialise_item(item) for item in plan],
@@ -224,6 +295,8 @@ def import_excel(
     credentials: Credentials,
     default_discount_percent: Decimal | None = None,
     default_price_base: str = PRICE_BASE_CURRENT,
+    normalize_articles: bool = True,
+    mappings: ArticleMappings | None = None,
 ) -> dict[str, Any]:
     runtime_settings, store = get_runtime()
     plan, client = create_plan(
@@ -231,6 +304,8 @@ def import_excel(
         credentials,
         default_discount_percent=default_discount_percent,
         default_price_base=default_price_base,
+        normalize_articles=normalize_articles,
+        mappings=mappings,
     )
     upsert_items = [item for item in plan if item.ready and item.action == "upsert"]
     register_items = [item for item in plan if item.ready and item.action == "register"]
@@ -308,7 +383,7 @@ def credentials_from_json(data: dict[str, Any]) -> Credentials:
     return Credentials(login=login, password=password, token=token)
 
 
-def editor_plan(data: dict[str, Any], credentials: Credentials) -> tuple[PlanItem, HoroshopClient]:
+def editor_plan(data: dict[str, Any], credentials: Credentials) -> tuple[list[PlanItem], HoroshopClient]:
     runtime_settings, store = get_runtime()
     article = normalize(data.get("article"))
     with state_lock:
@@ -316,11 +391,14 @@ def editor_plan(data: dict[str, Any], credentials: Credentials) -> tuple[PlanIte
     if not existing:
         raise HoroshopSetsError("Редагувати можна лише набір з локального реєстру.")
 
+    existing_display = tuple(
+        normalize(value) for value in existing.get("display_articles", []) if normalize(value)
+    )
     supplied_display_articles = data.get("display_articles")
     if isinstance(supplied_display_articles, list):
         display_articles = tuple(normalize(value) for value in supplied_display_articles if normalize(value))
     elif supplied_display_articles is None:
-        display_articles = tuple(existing.get("display_articles", []))
+        display_articles = existing_display
     else:
         display_articles = split_display_articles(supplied_display_articles)
     if len(display_articles) < 2:
@@ -353,8 +431,13 @@ def editor_plan(data: dict[str, Any], credentials: Credentials) -> tuple[PlanIte
     title = SET_TITLE
     enabled = bool(existing.get("enabled", True))
     currency = normalize(existing.get("currency")) or runtime_settings.currency
+    normalize_articles = parse_flag(data.get("normalize_articles"), True)
+    composition_changed = tuple(a.casefold() for a in display_articles) != tuple(
+        a.casefold() for a in existing_display
+    )
 
     client = HoroshopClient(runtime_settings, credentials)
+    catalog = CatalogIndex.from_raw(client.export_catalog())
     row = SetRow(
         article,
         display_articles,
@@ -367,39 +450,79 @@ def editor_plan(data: dict[str, Any], credentials: Credentials) -> tuple[PlanIte
         currency=currency,
         price_base=price_base,
     )
-    item = prepare_plan([row], CatalogIndex.from_raw(client.export_catalog()))[0]
-    if item.error:
-        raise HoroshopSetsError(item.error)
-    return item, client
+    active_mappings = stored_mappings() if composition_changed else ArticleMappings.empty()
+    items = prepare_plan(
+        [row],
+        catalog,
+        normalize_articles=normalize_articles,
+        mappings=active_mappings,
+    )
+    if not composition_changed and len(items) == 1 and items[0].error:
+        # Fallback if a previously stored display_article needs mapping resolution
+        fallback_items = prepare_plan(
+            [row],
+            catalog,
+            normalize_articles=normalize_articles,
+            mappings=stored_mappings(),
+        )
+        matching = [it for it in fallback_items if it.article.casefold() == article.casefold()]
+        items = matching[:1] if matching else fallback_items[:1]
+    if len(items) == 1 and not items[0].error and items[0].article != article and not composition_changed:
+        items = [replace(items[0], article=article)]
+    for item in items:
+        if item.error:
+            raise HoroshopSetsError(item.error)
+    return items, client
 
 
 def update_tracked_set(data: dict[str, Any]) -> dict[str, Any]:
     credentials = credentials_from_json(data)
     runtime_settings, store = get_runtime()
-    item, client = editor_plan(data, credentials)
-    result = import_results(client.import_sets(import_payload([item], runtime_settings))).get(
-        item.article,
-        (False, "API не повернуло результат для цього набору."),
-    )
+    items, client = editor_plan(data, credentials)
+    results: dict[str, tuple[bool, str]] = {}
+    for start in range(0, len(items), runtime_settings.batch_size):
+        batch = items[start : start + runtime_settings.batch_size]
+        results.update(import_results(client.import_sets(import_payload(batch, runtime_settings))))
     with state_lock:
-        store.record(item, "synced" if result[0] else "error", result[1])
+        for item in items:
+            res = results.get(item.article, (False, "API не повернуло результат для цього набору."))
+            store.record(item, "synced" if res[0] else "error", res[1])
         store.save()
-    return {"item": serialise_item(item), "success": result[0], "message": result[1]}
+    first = items[0]
+    first_res = results.get(first.article, (False, "API не повернуло результат для цього набору."))
+    all_ok = all(results.get(it.article, (False, ""))[0] for it in items)
+    return {
+        "item": serialise_item(first),
+        "items": [
+            {
+                **serialise_item(it),
+                "status": "synced" if results.get(it.article, (False, ""))[0] else "error",
+                "message": results.get(it.article, (False, "API не повернуло результат для цього набору."))[1],
+            }
+            for it in items
+        ],
+        "imported": sum(results.get(it.article, (False, ""))[0] for it in items),
+        "errors": sum(not results.get(it.article, (False, ""))[0] for it in items),
+        "success": all_ok,
+        "message": (
+            first_res[1]
+            if len(items) == 1
+            else f"Оновлено / створено варіацій наборів: {sum(results.get(it.article, (False, ''))[0] for it in items)} із {len(items)}."
+        ),
+    }
 
 
 def create_manual_set(data: dict[str, Any]) -> dict[str, Any]:
     credentials = credentials_from_json(data)
     runtime_settings, store = get_runtime()
-    article = normalize(data.get("article"))
+    raw_article = normalize(data.get("article"))
     display_articles = split_display_articles(data.get("display_articles", ""))
-    article = article or build_set_article(display_articles)
-    with state_lock:
-        if store.contains(article):
-            raise HoroshopSetsError("Цей набір уже є в реєстрі. Скористайтеся редагуванням у таблиці нижче.")
+    article = raw_article or build_set_article(display_articles)
 
     raw_price = normalize(data.get("discounted_price"))
     discount_percent = parse_discount_percent(data.get("discount_percent"))
     price_base = parse_price_base(data.get("price_base"), default=PRICE_BASE_CURRENT)
+    normalize_articles = parse_flag(data.get("normalize_articles"), True)
     if raw_price:
         price: Decimal | None = parse_price(raw_price)
         discount_percent = None
@@ -417,21 +540,57 @@ def create_manual_set(data: dict[str, Any]) -> dict[str, Any]:
         price_base=price_base,
     )
     client = HoroshopClient(runtime_settings, credentials)
-    item = prepare_plan([row], CatalogIndex.from_raw(client.export_catalog()))[0]
-    if item.error:
-        raise HoroshopSetsError(item.error)
-
-    result = import_results(client.import_sets(import_payload([item], runtime_settings))).get(
-        item.article,
-        (False, "API не повернуло результат для цього набору."),
+    items = prepare_plan(
+        [row],
+        CatalogIndex.from_raw(client.export_catalog()),
+        normalize_articles=normalize_articles,
+        mappings=stored_mappings(),
     )
+    for item in items:
+        if item.error:
+            raise HoroshopSetsError(item.error)
+
     with state_lock:
-        if result[0]:
-            store.record(item, "synced", result[1])
-        else:
-            store.record_failed_attempt(item, result[1])
+        if len(items) == 1 and store.contains(items[0].article):
+            raise HoroshopSetsError("Цей набір уже є в реєстрі. Скористайтеся редагуванням у таблиці нижче.")
+
+    results: dict[str, tuple[bool, str]] = {}
+    for start in range(0, len(items), runtime_settings.batch_size):
+        batch = items[start : start + runtime_settings.batch_size]
+        results.update(import_results(client.import_sets(import_payload(batch, runtime_settings))))
+
+    with state_lock:
+        for item in items:
+            res = results.get(item.article, (False, "API не повернуло результат для цього набору."))
+            if res[0] or store.contains(item.article):
+                store.record(item, "synced" if res[0] else "error", res[1])
+            else:
+                store.record_failed_attempt(item, res[1])
         store.save()
-    return {"item": serialise_item(item), "success": result[0], "message": result[1]}
+
+    first = items[0]
+    first_res = results.get(first.article, (False, "API не повернуло результат для цього набору."))
+    imported_count = sum(results.get(it.article, (False, ""))[0] for it in items)
+    error_count = len(items) - imported_count
+    return {
+        "item": serialise_item(first),
+        "items": [
+            {
+                **serialise_item(it),
+                "status": "synced" if results.get(it.article, (False, ""))[0] else "error",
+                "message": results.get(it.article, (False, "API не повернуло результат для цього набору."))[1],
+            }
+            for it in items
+        ],
+        "imported": imported_count,
+        "errors": error_count,
+        "success": error_count == 0,
+        "message": (
+            first_res[1]
+            if len(items) == 1
+            else f"Створено варіацій наборів: {imported_count} із {len(items)}."
+        ),
+    }
 
 
 def delete_tracked_sets(data: dict[str, Any]) -> dict[str, Any]:
@@ -559,16 +718,83 @@ async def delete_sets(request: Request) -> dict[str, Any]:
         raise HTTPException(status_code=400, detail=str(error)) from error
 
 
+@app.get("/api/mappings/info")
+def mappings_info() -> dict[str, int]:
+    mappings = stored_mappings()
+    return {
+        "sources": len(mappings.entries),
+        "rules": sum(len(targets) for targets in mappings.entries.values()),
+    }
+
+
+@app.get("/api/mappings/export")
+def export_mappings() -> Response:
+    content = build_mappings_excel(stored_mappings())
+    return Response(
+        content=content,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={
+            "Content-Disposition": 'attachment; filename="horoshop_article_mappings.xlsx"',
+            "Cache-Control": "no-store",
+        },
+    )
+
+
+@app.post("/api/mappings/clear")
+async def clear_mappings() -> dict[str, Any]:
+    with mapping_lock:
+        backup_name = ""
+        if MAPPINGS_FILE.exists():
+            import datetime
+
+            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            backup_file = MAPPINGS_FILE.with_name(f"article_mappings_{timestamp}.json.bak")
+            latest_bak = MAPPINGS_FILE.with_suffix(".json.bak")
+            try:
+                content = MAPPINGS_FILE.read_text(encoding="utf-8")
+                backup_file.write_text(content, encoding="utf-8")
+                latest_bak.write_text(content, encoding="utf-8")
+                backup_name = backup_file.name
+            except OSError as error:
+                logger.warning("Could not backup mappings file: %s", error)
+        save_article_mappings(MAPPINGS_FILE, ArticleMappings.empty())
+        return {"status": "cleared", "backup": backup_name}
+
+
+@app.post("/api/mappings")
+async def upload_mappings_endpoint(request: Request) -> dict[str, int]:
+    try:
+        mappings = await uploaded_mappings(await request.form())
+        if mappings is None:
+            raise HoroshopSetsError("Оберіть Excel-файл сопоставлень.")
+        stored = await asyncio.to_thread(add_to_stored_mappings, mappings)
+        return {
+            "sources": len(stored.entries),
+            "rules": sum(len(targets) for targets in stored.entries.values()),
+        }
+    except (HoroshopSetsError, ValueError) as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+
+
 @app.post("/api/preview")
 async def preview(request: Request) -> dict[str, Any]:
     try:
-        contents, credentials, default_discount, default_price_base = await upload_bytes(request)
+        (
+            contents,
+            credentials,
+            default_discount,
+            default_price_base,
+            normalize_articles,
+            mappings,
+        ) = await upload_bytes(request)
         return await asyncio.to_thread(
             preview_excel,
             contents,
             credentials,
             default_discount,
             default_price_base,
+            normalize_articles,
+            mappings,
         )
     except (HoroshopSetsError, ValueError) as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
@@ -577,13 +803,22 @@ async def preview(request: Request) -> dict[str, Any]:
 @app.post("/api/import")
 async def import_sets(request: Request) -> dict[str, Any]:
     try:
-        contents, credentials, default_discount, default_price_base = await upload_bytes(request)
+        (
+            contents,
+            credentials,
+            default_discount,
+            default_price_base,
+            normalize_articles,
+            mappings,
+        ) = await upload_bytes(request)
         return await asyncio.to_thread(
             import_excel,
             contents,
             credentials,
             default_discount,
             default_price_base,
+            normalize_articles,
+            mappings,
         )
     except (HoroshopSetsError, ValueError) as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
