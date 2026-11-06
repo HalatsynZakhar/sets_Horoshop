@@ -5,10 +5,21 @@
     "state_file": "data/sets_state.json"
   },
   "horoshop": {
-    "domain": "https://your-shop.example.com",
+    "domain": "https://attoys.com.ua",
+    "login": "z.halatsyn@atuatoys.kiev.ua",
+    "password": "your-horoshop-password",
     "currency": "UAH",
-    "batch_size": 50
+    "title": "Вместе дешевле",
+    "batch_size": 50,
+    "request_timeout_seconds": 60
   },
+  "images_xml_url": "http://176.104.6.149:8080/xml/images_export.xml",
+  "auth": {
+    "enabled": true,
+    "login": "admin",
+    "password": "Bublik44"
+  },
+  "admin_password": "Bublik44",
   "logging": {
     "public_log_path": "C:\\ShareFiles\\public",
     "public_log_name": "horoshop_sets.log"

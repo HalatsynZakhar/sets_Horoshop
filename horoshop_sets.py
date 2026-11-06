@@ -54,6 +54,11 @@ class Settings:
     state_file: Path
     public_log_path: Path = Path("logs")
     public_log_name: str = "horoshop_sets.log"
+    login: str = ""
+    password: str = ""
+    auth_enabled: bool = True
+    auth_login: str = "admin"
+    auth_password: str = "Bublik44"
 
     @property
     def public_log_file(self) -> Path:
@@ -62,8 +67,8 @@ class Settings:
 
 @dataclass(frozen=True)
 class Credentials:
-    login: str
-    password: str
+    login: str = ""
+    password: str = ""
     token: str = ""
 
 
@@ -224,6 +229,7 @@ def load_settings(config_file: Path) -> Settings:
     horoshop = raw.get("horoshop") or {}
     server = raw.get("server") or {}
     logging_config = raw.get("logging") or {}
+    auth_config = raw.get("auth") or {}
     if not isinstance(horoshop, dict) or not isinstance(server, dict) or not isinstance(logging_config, dict):
         raise ValueError("Sections horoshop, server and logging must contain objects.")
 
@@ -246,6 +252,22 @@ def load_settings(config_file: Path) -> Settings:
         raise ValueError("logging.public_log_name must be a file name without a path.")
     title = SET_TITLE
 
+    login = normalize(horoshop.get("login"))
+    password = normalize(horoshop.get("password"))
+
+    auth_enabled = True
+    auth_login = "admin"
+    auth_password = "Bublik44"
+    if isinstance(auth_config, dict):
+        if "enabled" in auth_config:
+            auth_enabled = bool(auth_config.get("enabled"))
+        if normalize(auth_config.get("login")):
+            auth_login = normalize(auth_config.get("login"))
+        if normalize(auth_config.get("password")):
+            auth_password = normalize(auth_config.get("password"))
+    if (not auth_password or auth_password == "Bublik44") and normalize(raw.get("admin_password")):
+        auth_password = normalize(raw.get("admin_password"))
+
     return Settings(
         domain=domain.rstrip("/"),
         host=normalize(server.get("host", "0.0.0.0")) or "0.0.0.0",
@@ -259,6 +281,11 @@ def load_settings(config_file: Path) -> Settings:
         state_file=state_file,
         public_log_path=public_log_path,
         public_log_name=public_log_name,
+        login=login,
+        password=password,
+        auth_enabled=auth_enabled,
+        auth_login=auth_login,
+        auth_password=auth_password,
     )
 
 
@@ -1259,11 +1286,13 @@ class HoroshopClient:
     def token(self) -> str:
         if self._token:
             return self._token
-        if not self.credentials.login or not self.credentials.password:
+        login_val = self.credentials.login or self.settings.login
+        password_val = self.credentials.password or self.settings.password
+        if not login_val or not password_val:
             raise ValueError("Enter Horoshop login and password.")
         response = self._post(
             "/api/auth/",
-            {"login": self.credentials.login, "password": self.credentials.password},
+            {"login": login_val, "password": password_val},
         )
         token = response.get("response", {}).get("token")
         if not token:

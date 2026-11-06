@@ -53,20 +53,80 @@
     .log-entry { padding: 9px 10px; border-left: 4px solid #7b8c81; background: #f5f8f6; line-height: 1.4; }
     .log-entry.ok { border-color: #177245; background: #eaf7ee; }
     .log-entry.error { border-color: #b42332; background: #fff0f1; }
+    /* Visual Bundle Composition */
+    .bundle-composition { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 6px; vertical-align: middle; }
+    .prod-pill { display: inline-flex; align-items: center; gap: 6px; background: #ffffff; border: 1px solid #cce0d4; border-radius: 6px; padding: 3px 6px 3px 3px; box-shadow: 0 1px 3px rgba(0,0,0,0.04); transition: all 0.15s ease; }
+    .prod-pill:hover { border-color: #135c3c; box-shadow: 0 3px 8px rgba(19, 92, 60, 0.12); transform: translateY(-1px); }
+    .prod-img-box { width: 44px; height: 44px; border-radius: 5px; background: #fbfdfc; border: 1px solid #e1ebe5; display: flex; align-items: center; justify-content: center; overflow: hidden; flex-shrink: 0; cursor: zoom-in; }
+    .prod-img-box img { width: 100%; height: 100%; object-fit: contain; transition: transform 0.2s; }
+    .prod-img-box:hover img { transform: scale(1.12); }
+    .prod-no-img { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; background: #eef4f0; color: #627b6d; font-size: 10px; font-weight: 700; text-align: center; padding: 2px; word-break: break-all; }
+    .prod-info { display: flex; flex-direction: column; gap: 1px; }
+    .prod-art { font-size: 12px; font-weight: 700; color: #153825; }
+    .prod-brand { font-size: 10px; color: #5d7568; max-width: 95px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .bundle-plus { width: 20px; height: 20px; border-radius: 50%; background: #e1eee6; color: #135c3c; font-weight: 900; display: inline-flex; align-items: center; justify-content: center; font-size: 13px; flex-shrink: 0; }
+
+    /* Cards Grid View */
+    .sets-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); gap: 14px; margin-top: 10px; }
+    .set-card { background: #ffffff; border: 1px solid #d5e1d9; border-radius: 8px; padding: 14px; box-shadow: 0 2px 6px rgba(0,0,0,0.03); display: flex; flex-direction: column; justify-content: space-between; transition: all 0.15s ease; }
+    .set-card:hover { border-color: #92bba0; box-shadow: 0 6px 16px rgba(19, 92, 60, 0.08); }
+    .set-card-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; margin-bottom: 10px; padding-bottom: 8px; border-bottom: 1px dashed #e1ebe5; }
+    .set-card-article { font-size: 14px; font-weight: 800; color: #135c3c; word-break: break-all; }
+    .set-card-body { flex: 1; margin-bottom: 10px; }
+    .set-card-pricing { background: #f6faf7; border: 1px solid #e5eee8; border-radius: 6px; padding: 8px 10px; margin-top: 10px; display: flex; align-items: center; justify-content: space-between; }
+    .set-price-value { font-size: 16px; font-weight: 800; color: #0c5532; }
+    .set-old-price { font-size: 11px; color: #7b8f84; text-decoration: line-through; }
+    .set-discount-badge { background: #177245; color: #fff; font-weight: 700; font-size: 11px; padding: 2px 6px; border-radius: 8px; }
+    .set-card-footer { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding-top: 10px; border-top: 1px solid #edf3ef; font-size: 11px; color: #6b7f73; }
+
+    /* Registry Toolbar */
+    .registry-toolbar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: space-between; margin-top: 10px; margin-bottom: 12px; }
+    .view-toggle-group { display: inline-flex; border: 1px solid #adc1b3; border-radius: 4px; overflow: hidden; background: #eef4f0; }
+    .view-toggle-btn { border: none; background: transparent; color: #274735; padding: 6px 12px; font-size: 12px; font-weight: 700; cursor: pointer; border-radius: 0; transition: background 0.15s, color 0.15s; }
+    .view-toggle-btn.active { background: #135c3c; color: #ffffff; }
+
+    /* Live Preview Box */
+    .live-bundle-preview { background: #f7faf8; border: 1px solid #cfe0d6; border-radius: 6px; padding: 10px 12px; margin-top: 10px; }
+
+    /* Lightbox Modal */
+    .lightbox-overlay { position: fixed; inset: 0; background: rgba(10, 25, 18, 0.75); backdrop-filter: blur(3px); display: none; align-items: center; justify-content: center; z-index: 1000; padding: 16px; }
+    .lightbox-overlay.visible { display: flex; }
+    .lightbox-content { background: #fff; border-radius: 12px; max-width: 480px; width: 100%; overflow: hidden; box-shadow: 0 16px 40px rgba(0,0,0,0.3); position: relative; }
+    .lightbox-img-wrap { width: 100%; height: 340px; background: #fff; display: flex; align-items: center; justify-content: center; padding: 12px; }
+    .lightbox-img-wrap img { max-width: 100%; max-height: 100%; object-fit: contain; }
+    .lightbox-meta { padding: 14px 18px; border-top: 1px solid #e3ece6; background: #fafcfb; }
+    .lightbox-close { position: absolute; top: 10px; right: 10px; width: 32px; height: 32px; border-radius: 50%; background: rgba(0,0,0,0.55); color: #fff; border: none; display: flex; align-items: center; justify-content: center; font-size: 20px; cursor: pointer; line-height: 1; padding: 0; }
+    .lightbox-close:hover { background: rgba(0,0,0,0.85); }
+
     @media (max-width: 720px) { main { padding: 14px; } section { padding: 14px; } .grid, .grid.two { grid-template-columns: 1fr; } }
   </style>
 </head>
 <body>
   <header>
-    <h1>Набори Хорошоп</h1>
-    <p>Створення та керування наборами товарів.</p>
+    <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;">
+      <div>
+        <h1>Набори Хорошоп</h1>
+        <p>Створення та керування наборами товарів.</p>
+      </div>
+      <div style="display: flex; align-items: center; gap: 10px;">
+        <span style="font-size: 13px; color: #dcefe4; background: rgba(255,255,255,0.15); padding: 6px 12px; border-radius: 4px; display: inline-flex; align-items: center; gap: 6px;">
+          👤 Користувач: <b id="header-user-name">admin</b>
+        </span>
+        <button id="logout-btn" type="button" class="secondary" style="padding: 6px 12px; font-size: 13px; background: #fff; color: #135c3c; border-color: #fff; cursor: pointer;">Вийти</button>
+      </div>
+    </div>
   </header>
   <main>
     <section>
       <h2>Доступ до API</h2>
+      <div id="credentials-badge-container" style="display:none; margin-bottom:12px; padding:10px 12px; border-radius:4px; background:#eaf7ee; border:1px solid #c2e6cf; color:#0c5532; font-size:13px;">
+        <span style="font-weight:700;">✅ Логін і пароль API Хорошоп завантажено з config.json</span>
+        <span id="credentials-user-hint" style="color:#2f6e4d; margin-left:6px;"></span>.
+        Поля нижче можна залишити порожніми (заповнюйте лише за потреби змінити чи використати токен).
+      </div>
       <div class="grid">
-        <label>Логін API<input id="login" autocomplete="username"></label>
-        <label>Пароль API<input id="password" type="password" autocomplete="current-password"></label>
+        <label>Логін API<input id="login" autocomplete="username" placeholder="з config.json (за замовчуванням)"></label>
+        <label>Пароль API<input id="password" type="password" autocomplete="current-password" placeholder="••••••••••••"></label>
         <label>Токен API<input id="token"><span class="hint">Можна вказати замість логіна та пароля.</span></label>
       </div>
     </section>
@@ -101,6 +161,7 @@
           <span class="hint">Для РРЦ у кожного товару має бути стара ціна в Хорошоп.</span>
         </label>
       </div>
+      <div id="create-live-preview" class="live-bundle-preview" style="display:none;"></div>
       <div class="actions"><button id="create-set" type="button">Створити набір</button></div>
       <div class="status-box" id="create-status" role="status" aria-live="polite"></div>
     </section>
@@ -130,10 +191,23 @@
 
     <section>
       <h2>Реєстр наборів</h2>
-      <p class="note">Тут показані набори, створені через цей сервіс. Хорошоп не надає масового експорту наборів, тому локальний реєстр зберігається окремо й не стирається під час оновлення сервера.</p>
-      <div class="actions"><button class="danger" id="delete-selected" type="button">Видалити вибрані</button><a class="link-button secondary" href="/api/sets/export">Завантажити таблицю реєстру</a></div>
+      <p class="note">Тут показані набори, створені через цей сервіс. Фото товарів автоматично підтягуються з XML-фіду. Локальний реєстр зберігається окремо й не стирається під час оновлення сервера.</p>
+      <div class="registry-toolbar">
+        <div style="display: flex; gap: 10px; align-items: center; flex: 1; max-width: 480px;">
+          <input id="search-registry" placeholder="🔍 Пошук за артикулом набору, товару або брендом..." style="min-height: 36px; padding: 6px 10px;">
+          <span id="registry-count-badge" class="tag" style="background:#eaf2ed; color:#135c3c; font-size:12px; padding: 5px 8px; white-space:nowrap;">0 наборів</span>
+        </div>
+        <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+          <div class="view-toggle-group">
+            <button type="button" class="view-toggle-btn active" id="view-cards-btn" title="Відображення картками з фото">🗂️ Картки</button>
+            <button type="button" class="view-toggle-btn" id="view-table-btn" title="Табличне відображення">📋 Таблиця</button>
+          </div>
+          <button class="danger" id="delete-selected" type="button" style="padding: 7px 12px; font-size: 13px;">Видалити вибрані</button>
+          <a class="link-button secondary" href="/api/sets/export" style="padding: 7px 12px; font-size: 13px;">Вивантажити таблицю</a>
+        </div>
+      </div>
       <div class="status-box" id="state-status" role="status" aria-live="polite"></div>
-      <div class="table-wrap" id="state"><p class="empty">Завантаження реєстру...</p></div>
+      <div id="state"><p class="empty">Завантаження реєстру...</p></div>
     </section>
 
     <section id="editor">
@@ -150,6 +224,7 @@
           </select>
         </label>
       </div>
+      <div id="edit-live-preview" class="live-bundle-preview" style="display:none;"></div>
       <div class="actions"><button id="save-editor" type="button">Зберегти зміни</button><button class="secondary" id="cancel-editor" type="button">Закрити</button></div>
       <div class="status-box" id="edit-status" role="status" aria-live="polite"></div>
     </section>
@@ -161,11 +236,41 @@
   </main>
   <script>
     let registry = [];
+    let currentViewMode = localStorage.getItem('sets_view_mode') || 'cards';
+    let registryFilter = '';
+    let serverHasCredentials = false;
+    let livePreviewTimers = {};
+
     const state = document.getElementById('state');
     const result = document.getElementById('result');
     const log = document.getElementById('activity-log');
     const esc = value => String(value ?? '').replace(/[&<>"']/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
     const credentials = () => ({login: document.getElementById('login').value.trim(), password: document.getElementById('password').value, token: document.getElementById('token').value.trim()});
+
+    async function checkAuthStatus() {
+      try {
+        const response = await fetch('/api/auth/status');
+        if (response.ok) {
+          const data = await response.json();
+          if (data.user) {
+            const userEl = document.getElementById('header-user-name');
+            if (userEl) userEl.textContent = data.user;
+          }
+          if (data.has_horoshop_credentials) {
+            serverHasCredentials = true;
+            const badge = document.getElementById('credentials-badge-container');
+            const hint = document.getElementById('credentials-user-hint');
+            if (badge) badge.style.display = 'block';
+            if (hint && data.horoshop_login) hint.textContent = `(${data.horoshop_login})`;
+            const loginEl = document.getElementById('login');
+            if (loginEl && !loginEl.value) {
+              loginEl.placeholder = data.horoshop_login || 'з config.json';
+            }
+          }
+        }
+      } catch (_) {}
+    }
+
     function setSectionStatus(targetId, message, kind = 'info') {
       if (!targetId) return;
       const box = document.getElementById(targetId);
@@ -178,6 +283,7 @@
       box.className = `status-box visible ${kind}`;
       box.textContent = message;
     }
+
     function setMessage(message, kind = '', targetId = '') {
       if (log.querySelector('.empty')) log.innerHTML = '';
       const entry = document.createElement('div');
@@ -186,11 +292,13 @@
       log.prepend(entry);
       if (targetId) setSectionStatus(targetId, message, kind || 'info');
     }
+
     function clearCredentialErrors() { ['login', 'password', 'file'].forEach(id => { const el = document.getElementById(id); if (el) el.classList.remove('input-error'); }); }
+
     function validateCredentials(targetId = '') {
       const data = credentials();
       clearCredentialErrors();
-      if (data.token || (data.login && data.password)) return true;
+      if (data.token || (data.login && data.password) || serverHasCredentials) return true;
       const loginEl = document.getElementById('login');
       const passwordEl = document.getElementById('password');
       if (!data.login) loginEl.classList.add('input-error');
@@ -205,18 +313,303 @@
       focusTarget.focus({preventScroll: true});
       return false;
     }
-    async function readResponse(response) { const text = await response.text(); try { return JSON.parse(text); } catch { throw new Error(text || `Помилка сервера (${response.status}).`); } }
-    async function jsonApi(url, body) { const response = await fetch(url, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)}); const data = await readResponse(response); if (!response.ok) throw new Error(data.detail || 'Помилка сервера.'); return data; }
-    function statusText(status) { return ({ready:'готово', synced:'імпортовано', deleted:'видалено', invalid:'помилка', error:'помилка', delete_error:'помилка'})[status] || status; }
-    function actionText(action) { return action === 'delete' ? 'видалення' : 'створення / оновлення'; }
+
+    async function readResponse(response) {
+      if (response.status === 401) {
+        window.location.href = '/login?next=' + encodeURIComponent(window.location.pathname);
+        return {};
+      }
+      const text = await response.text();
+      try { return JSON.parse(text); } catch { throw new Error(text || `Помилка сервера (${response.status}).`); }
+    }
+
+    async function jsonApi(url, body) {
+      const response = await fetch(url, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});
+      const data = await readResponse(response);
+      if (!response.ok) throw new Error(data.detail || 'Помилка сервера.');
+      return data;
+    }
+
+    function statusText(status) { return ({ready:'готово', synced:'імпортовано', registered:'на обліку', deleted:'видалено', invalid:'помилка', error:'помилка', delete_error:'помилка'})[status] || status; }
+    function actionText(action) { return action === 'delete' ? 'видалення' : action === 'register' ? 'облік' : 'створення / оновлення'; }
     function baseText(base) { return base === 'rrc' ? 'РРЦ' : 'Ціна'; }
+
     function priceDetails(item) {
       if (item.discount_percent === null || item.discount_percent === undefined || item.discount_percent === '') return '';
       const sumPart = item.base_price_sum ? ` із ${esc(item.base_price_sum)}` : '';
       return `<div class="price-meta">-${esc(item.discount_percent)}% (${esc(baseText(item.price_base))}${sumPart})</div>`;
     }
-    function renderResult(items) { if (!items.length) { result.innerHTML = '<p class="empty">У файлі немає операцій.</p>'; return; } result.innerHTML = `<table><thead><tr><th>Рядок</th><th>Операція</th><th>Набір</th><th>Товари</th><th>Ціна</th><th>Стан</th></tr></thead><tbody>${items.map(item => `<tr><td>${item.row_number}</td><td>${esc(actionText(item.action))}</td><td>${esc(item.article)}</td><td>${item.display_articles.map(esc).join('; ') || '-'}</td><td>${esc(item.discounted_price || '-')}${priceDetails(item)}</td><td><span class="tag ${esc(item.status)}">${esc(statusText(item.status))}</span>${item.message ? '<br>' + esc(item.message) : ''}</td></tr>`).join('')}</tbody></table>`; }
-    function renderState(data) { registry = data.sets || []; if (!registry.length) { state.innerHTML = '<p class="empty">У реєстрі поки немає наборів.</p>'; return; } state.innerHTML = `<table><thead><tr><th></th><th>Артикул</th><th>Товари</th><th>Кінцева ціна</th><th>Стан</th><th>Змінено</th><th></th></tr></thead><tbody>${registry.map(item => `<tr><td><input type="checkbox" data-select="${esc(item.article)}"></td><td>${esc(item.article)}</td><td>${(item.display_articles || []).map(esc).join('; ')}</td><td><div class="price-cell"><input data-price="${esc(item.article)}" value="${esc(item.discounted_price)}"><button class="secondary" data-save-price="${esc(item.article)}" type="button">Зберегти</button></div>${priceDetails(item)}</td><td><span class="tag ${esc(item.status)}">${esc(statusText(item.status))}</span>${item.message ? '<br>' + esc(item.message) : ''}</td><td>${esc(item.updated_at)}</td><td><div class="actions"><button class="secondary" data-edit="${esc(item.article)}" type="button">Змінити</button><button class="danger" data-delete-one="${esc(item.article)}" type="button">Видалити</button></div></td></tr>`).join('')}</tbody></table>`; document.querySelectorAll('[data-edit]').forEach(button => button.addEventListener('click', () => openEditor(button.dataset.edit))); document.querySelectorAll('[data-save-price]').forEach(button => button.addEventListener('click', () => quickPrice(button.dataset.savePrice))); document.querySelectorAll('[data-delete-one]').forEach(button => button.addEventListener('click', () => deleteArticles([button.dataset.deleteOne]))); }
+
+    function renderBundleComposition(productsInfo, displayArticles) {
+      const items = (productsInfo && productsInfo.length)
+        ? productsInfo
+        : (displayArticles || []).map(a => ({article: a, image: '', brand: ''}));
+
+      if (!items.length) return '<span class="empty">-</span>';
+
+      return `
+        <div class="bundle-composition">
+          ${items.map((prod, idx) => {
+            const art = esc(prod.article || '');
+            const img = prod.image ? esc(prod.image) : '';
+            const brand = prod.brand ? esc(prod.brand) : '';
+            const plus = idx > 0 ? '<span class="bundle-plus">+</span>' : '';
+            const imgContent = img
+              ? `<img src="${img}" alt="${art}" loading="lazy" onclick="openLightbox('${img}', '${art}', '${brand}')" title="Клікніть для збільшення">`
+              : `<div class="prod-no-img"><span>${art}</span></div>`;
+
+            return `
+              ${plus}
+              <div class="prod-pill" title="${brand ? brand + ' — ' : ''}${art}">
+                <div class="prod-img-box">${imgContent}</div>
+                <div class="prod-info">
+                  <span class="prod-art">${art}</span>
+                  ${brand ? `<span class="prod-brand">${brand}</span>` : ''}
+                </div>
+              </div>
+            `;
+          }).join('')}
+        </div>
+      `;
+    }
+
+    function openLightbox(imgUrl, article, brand) {
+      const modal = document.getElementById('image-modal');
+      const img = document.getElementById('lightbox-img');
+      const art = document.getElementById('lightbox-art');
+      const br = document.getElementById('lightbox-brand');
+      if (!modal || !img) return;
+      img.src = imgUrl;
+      if (art) art.textContent = `Товар: ${article}`;
+      if (br) br.textContent = brand ? `Бренд: ${brand}` : '';
+      modal.classList.add('visible');
+    }
+
+    function closeLightbox(e) {
+      if (e && e.target && e.target.closest('.lightbox-content') && !e.target.classList.contains('lightbox-close')) return;
+      const modal = document.getElementById('image-modal');
+      if (modal) modal.classList.remove('visible');
+      const img = document.getElementById('lightbox-img');
+      if (img) img.src = '';
+    }
+
+    function debounceLivePreview(type) {
+      clearTimeout(livePreviewTimers[type]);
+      livePreviewTimers[type] = setTimeout(() => updateLivePreview(type), 250);
+    }
+
+    async function updateLivePreview(type) {
+      const inputEl = document.getElementById(type === 'create' ? 'create-products' : 'edit-products');
+      const previewBox = document.getElementById(type === 'create' ? 'create-live-preview' : 'edit-live-preview');
+      if (!inputEl || !previewBox) return;
+
+      const rawVal = inputEl.value.trim();
+      if (!rawVal) {
+        previewBox.style.display = 'none';
+        previewBox.innerHTML = '';
+        return;
+      }
+
+      const articles = rawVal.split(/[;,]/).map(s => s.trim()).filter(Boolean);
+      if (!articles.length) {
+        previewBox.style.display = 'none';
+        previewBox.innerHTML = '';
+        return;
+      }
+
+      try {
+        const res = await fetch('/api/products/info?articles=' + encodeURIComponent(articles.join(',')));
+        if (!res.ok) return;
+        const data = await res.json();
+        const items = data.items || [];
+        previewBox.style.display = 'block';
+        previewBox.innerHTML = `
+          <div style="font-size:12px; font-weight:700; color:#135c3c; margin-bottom:6px; display:flex; align-items:center; gap:6px;">
+            <span>📦 Склад набору з фото:</span>
+            <span style="font-weight:normal; color:#5d7568;">(${items.length} поз.)</span>
+          </div>
+          ${renderBundleComposition(items, articles)}
+        `;
+      } catch (_) {}
+    }
+
+    function renderResult(items) {
+      if (!items.length) {
+        result.innerHTML = '<p class="empty">У файлі немає операцій.</p>';
+        return;
+      }
+      result.innerHTML = `
+        <table>
+          <thead>
+            <tr>
+              <th>Рядок</th>
+              <th>Операція</th>
+              <th>Набір</th>
+              <th>Склад набору (Товари та фото)</th>
+              <th>Ціна</th>
+              <th>Стан</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${items.map(item => `
+              <tr>
+                <td>${item.row_number}</td>
+                <td>${esc(actionText(item.action))}</td>
+                <td style="font-weight:700; color:#135c3c;">${esc(item.article)}</td>
+                <td>${renderBundleComposition(item.products_info, item.display_articles)}</td>
+                <td>${esc(item.discounted_price || '-')}${priceDetails(item)}</td>
+                <td>
+                  <span class="tag ${esc(item.status)}">${esc(statusText(item.status))}</span>
+                  ${item.message ? '<br>' + esc(item.message) : ''}
+                </td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      `;
+    }
+
+    function filteredRegistry() {
+      if (!registryFilter) return registry;
+      return registry.filter(item => {
+        const art = String(item.article || '').toLowerCase();
+        if (art.includes(registryFilter)) return true;
+        const prods = (item.display_articles || []).join(' ').toLowerCase();
+        if (prods.includes(registryFilter)) return true;
+        const brands = (item.products_info || []).map(p => (p.brand || '') + ' ' + (p.article || '')).join(' ').toLowerCase();
+        if (brands.includes(registryFilter)) return true;
+        return false;
+      });
+    }
+
+    function renderCardsView(items) {
+      if (!items.length) {
+        return '<p class="empty">Не знайдено жодного набору за вашим запитом.</p>';
+      }
+      return `
+        <div class="sets-grid">
+          ${items.map(item => {
+            const art = esc(item.article);
+            const price = item.discounted_price ? `${esc(item.discounted_price)} грн` : '-';
+            const sumPart = item.base_price_sum ? `<span class="set-old-price">${esc(item.base_price_sum)} грн</span>` : '';
+            const discountBadge = item.discount_percent ? `<span class="set-discount-badge">-${esc(item.discount_percent)}%</span>` : '';
+            const baseTxt = item.price_base ? `(${esc(baseText(item.price_base))})` : '';
+
+            return `
+              <div class="set-card">
+                <div>
+                  <div class="set-card-header">
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                      <input type="checkbox" data-select="${art}">
+                      <span class="set-card-article">${art}</span>
+                    </div>
+                    <span class="tag ${esc(item.status)}">${esc(statusText(item.status))}</span>
+                  </div>
+                  <div class="set-card-body">
+                    <div style="font-size: 11px; text-transform: uppercase; color: #556b5f; font-weight: 700; margin-bottom: 6px;">Склад набору:</div>
+                    ${renderBundleComposition(item.products_info, item.display_articles)}
+                    <div class="set-card-pricing">
+                      <div>
+                        <div style="font-size: 11px; color: #556b5f;">Ціна набору ${baseTxt}</div>
+                        <div style="display: flex; align-items: baseline; gap: 8px;">
+                          <span class="set-price-value">${price}</span>
+                          ${sumPart}
+                        </div>
+                      </div>
+                      ${discountBadge}
+                    </div>
+                    ${item.message ? `<div style="font-size: 12px; color: #8d1826; margin-top: 8px; font-weight: 600;">${esc(item.message)}</div>` : ''}
+                  </div>
+                </div>
+                <div class="set-card-footer">
+                  <span>Змінено: ${esc(item.updated_at || '-')}</span>
+                  <div style="display: flex; gap: 6px;">
+                    <button class="secondary" style="padding: 5px 9px; font-size: 12px;" data-edit="${art}" type="button">Змінити</button>
+                    <button class="danger" style="padding: 5px 9px; font-size: 12px;" data-delete-one="${art}" type="button">Видалити</button>
+                  </div>
+                </div>
+              </div>
+            `;
+          }).join('')}
+        </div>
+      `;
+    }
+
+    function renderTableView(items) {
+      if (!items.length) return '<p class="empty">Не знайдено жодного набору за вашим запитом.</p>';
+      return `
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th style="width:30px;"></th>
+                <th>Артикул</th>
+                <th>Склад набору (Фото та товари)</th>
+                <th>Кінцева ціна</th>
+                <th>Стан</th>
+                <th>Змінено</th>
+                <th>Дії</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${items.map(item => `
+                <tr>
+                  <td><input type="checkbox" data-select="${esc(item.article)}"></td>
+                  <td style="font-weight:700; color:#135c3c; white-space:nowrap;">${esc(item.article)}</td>
+                  <td>${renderBundleComposition(item.products_info, item.display_articles)}</td>
+                  <td>
+                    <div class="price-cell">
+                      <input data-price="${esc(item.article)}" value="${esc(item.discounted_price || '')}">
+                      <button class="secondary" data-save-price="${esc(item.article)}" type="button">Зберегти</button>
+                    </div>
+                    ${priceDetails(item)}
+                  </td>
+                  <td>
+                    <span class="tag ${esc(item.status)}">${esc(statusText(item.status))}</span>
+                    ${item.message ? '<br><span style="font-size:11px; color:#8d1826;">' + esc(item.message) + '</span>' : ''}
+                  </td>
+                  <td style="white-space:nowrap; color:#6b7f73; font-size:12px;">${esc(item.updated_at || '-')}</td>
+                  <td>
+                    <div class="actions" style="margin-top:0;">
+                      <button class="secondary" data-edit="${esc(item.article)}" type="button" style="padding:5px 8px; font-size:12px;">Змінити</button>
+                      <button class="danger" data-delete-one="${esc(item.article)}" type="button" style="padding:5px 8px; font-size:12px;">Видалити</button>
+                    </div>
+                  </td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>
+      `;
+    }
+
+    function renderRegistry() {
+      const items = filteredRegistry();
+      const countBadge = document.getElementById('registry-count-badge');
+      if (countBadge) {
+        countBadge.textContent = `${items.length} із ${registry.length} наборів`;
+      }
+
+      if (!registry.length) {
+        state.innerHTML = '<p class="empty">У реєстрі поки немає наборів.</p>';
+        return;
+      }
+
+      if (currentViewMode === 'cards') {
+        state.innerHTML = renderCardsView(items);
+      } else {
+        state.innerHTML = renderTableView(items);
+      }
+
+      document.querySelectorAll('[data-edit]').forEach(button => button.addEventListener('click', () => openEditor(button.dataset.edit)));
+      document.querySelectorAll('[data-save-price]').forEach(button => button.addEventListener('click', () => quickPrice(button.dataset.savePrice)));
+      document.querySelectorAll('[data-delete-one]').forEach(button => button.addEventListener('click', () => deleteArticles([button.dataset.deleteOne])));
+    }
+
+    function renderState(data) {
+      registry = data.sets || [];
+      renderRegistry();
+    }
     async function loadState() { try { const response = await fetch('/api/state'); const data = await readResponse(response); if (!response.ok) throw new Error(data.detail); renderState(data); } catch (error) { state.innerHTML = `<p class="empty">Не вдалося завантажити реєстр: ${esc(error.message)}</p>`; setMessage(error.message, 'error'); } }
     async function refreshMappingsInfo() {
       try {
@@ -279,7 +672,19 @@
         btn.textContent = 'Видалити дані бази';
       }
     }
-    function openEditor(article) { const item = registry.find(value => value.article === article); if (!item) return; setSectionStatus('edit-status', ''); document.getElementById('editor').classList.add('visible'); document.getElementById('edit-article').value = item.article; document.getElementById('edit-products').value = (item.display_articles || []).join('; '); document.getElementById('edit-price').value = item.discounted_price || ''; document.getElementById('edit-discount').value = item.discount_percent || ''; document.getElementById('edit-price-base').value = item.price_base || 'current'; document.getElementById('editor').scrollIntoView({behavior: 'smooth', block: 'start'}); }
+    function openEditor(article) {
+      const item = registry.find(value => value.article === article);
+      if (!item) return;
+      setSectionStatus('edit-status', '');
+      document.getElementById('editor').classList.add('visible');
+      document.getElementById('edit-article').value = item.article;
+      document.getElementById('edit-products').value = (item.display_articles || []).join('; ');
+      document.getElementById('edit-price').value = item.discounted_price || '';
+      document.getElementById('edit-discount').value = item.discount_percent || '';
+      document.getElementById('edit-price-base').value = item.price_base || 'current';
+      document.getElementById('editor').scrollIntoView({behavior: 'smooth', block: 'start'});
+      updateLivePreview('edit');
+    }
     async function quickPrice(article) { if (!validateCredentials('state-status')) return; const price = document.querySelector(`[data-price="${CSS.escape(article)}"]`).value; try { setMessage('Збереження ціни...', 'info', 'state-status'); const data = await jsonApi('/api/sets/update', {...credentials(), article, discounted_price: price, normalize_articles: document.getElementById('normalize-articles').checked}); if (!data.success) throw new Error(data.message); setMessage('Ціну оновлено.', 'ok', 'state-status'); await loadState(); } catch (error) { handleApiError(error, 'state-status'); } }
     async function saveEditor() { if (!validateCredentials('edit-status')) return; const btn = document.getElementById('save-editor'); btn.disabled = true; try { setMessage('Збереження набору...', 'info', 'edit-status'); const data = await jsonApi('/api/sets/update', {...credentials(), article: document.getElementById('edit-article').value, display_articles: document.getElementById('edit-products').value, discounted_price: document.getElementById('edit-price').value, discount_percent: document.getElementById('edit-discount').value, price_base: document.getElementById('edit-price-base').value, normalize_articles: document.getElementById('normalize-articles').checked}); if (data.items && data.items.length > 1) renderResult(data.items); if (!data.success) throw new Error(data.message); setMessage(data.items && data.items.length > 1 ? data.message : 'Набір оновлено.', 'ok', 'state-status'); document.getElementById('editor').classList.remove('visible'); await loadState(); } catch (error) { handleApiError(error, 'edit-status'); } finally { btn.disabled = false; } }
     async function createSet() { if (!validateCredentials('create-status')) return; const btn = document.getElementById('create-set'); btn.disabled = true; try { setMessage('Створення набору...', 'info', 'create-status'); const data = await jsonApi('/api/sets/create', {...credentials(), article: document.getElementById('create-article').value, display_articles: document.getElementById('create-products').value, discounted_price: document.getElementById('create-price').value, discount_percent: document.getElementById('create-discount').value, price_base: document.getElementById('create-price-base').value, normalize_articles: document.getElementById('normalize-articles').checked}); if (data.items && data.items.length) renderResult(data.items); if (!data.success) throw new Error(data.message); setMessage(data.items && data.items.length > 1 ? data.message : 'Набір створено.', 'ok', 'create-status'); ['create-article', 'create-products', 'create-price', 'create-discount'].forEach(id => document.getElementById(id).value = ''); await loadState(); } catch (error) { handleApiError(error, 'create-status'); } finally { btn.disabled = false; } }
@@ -370,8 +775,59 @@
     document.getElementById('save-editor').addEventListener('click', saveEditor);
     document.getElementById('cancel-editor').addEventListener('click', () => document.getElementById('editor').classList.remove('visible'));
     ['login', 'password', 'token'].forEach(id => document.getElementById(id).addEventListener('input', clearCredentialErrors));
+    document.getElementById('create-products')?.addEventListener('input', () => debounceLivePreview('create'));
+    document.getElementById('edit-products')?.addEventListener('input', () => debounceLivePreview('edit'));
+    document.getElementById('search-registry')?.addEventListener('input', e => {
+      registryFilter = e.target.value.trim().toLowerCase();
+      renderRegistry();
+    });
+    document.getElementById('view-cards-btn')?.addEventListener('click', () => {
+      currentViewMode = 'cards';
+      localStorage.setItem('sets_view_mode', 'cards');
+      document.getElementById('view-cards-btn').classList.add('active');
+      document.getElementById('view-table-btn').classList.remove('active');
+      renderRegistry();
+    });
+    document.getElementById('view-table-btn')?.addEventListener('click', () => {
+      currentViewMode = 'table';
+      localStorage.setItem('sets_view_mode', 'table');
+      document.getElementById('view-table-btn').classList.add('active');
+      document.getElementById('view-cards-btn').classList.remove('active');
+      renderRegistry();
+    });
+    if (currentViewMode === 'table') {
+      document.getElementById('view-table-btn')?.classList.add('active');
+      document.getElementById('view-cards-btn')?.classList.remove('active');
+    } else {
+      document.getElementById('view-cards-btn')?.classList.add('active');
+      document.getElementById('view-table-btn')?.classList.remove('active');
+    }
+    document.getElementById('logout-btn')?.addEventListener('click', async () => {
+      try {
+        await fetch('/api/logout', { method: 'POST' });
+      } finally {
+        window.location.href = '/login';
+      }
+    });
+    document.addEventListener('keydown', e => {
+      if (e.key === 'Escape') closeLightbox();
+    });
+    checkAuthStatus();
     loadState();
     refreshMappingsInfo();
   </script>
+
+  <div id="image-modal" class="lightbox-overlay" onclick="closeLightbox(event)">
+    <div class="lightbox-content" onclick="event.stopPropagation()">
+      <button class="lightbox-close" onclick="closeLightbox()" title="Закрити (Esc)">&times;</button>
+      <div class="lightbox-img-wrap">
+        <img id="lightbox-img" src="" alt="Товар">
+      </div>
+      <div class="lightbox-meta">
+        <div id="lightbox-art" style="font-size: 16px; font-weight: 800; color: #135c3c;"></div>
+        <div id="lightbox-brand" style="font-size: 13px; color: #556b5f; margin-top: 4px;"></div>
+      </div>
+    </div>
+  </div>
 </body>
 </html>
