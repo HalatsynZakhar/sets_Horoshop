@@ -140,6 +140,15 @@ class AuthAndConfigTests(unittest.TestCase):
         self.assertEqual(resp.status_code, 303)
         self.assertEqual(resp.headers["location"], "/login")
 
+    def test_get_runtime_reloads_on_mtime_change(self) -> None:
+        cfg, _ = sets_server.get_runtime()
+        old_mtime = sets_server._last_config_mtime
+        # Force mtime difference and verify reload occurs
+        sets_server._last_config_mtime = 0.0
+        new_cfg, _ = sets_server.get_runtime()
+        self.assertIsNotNone(new_cfg)
+        self.assertNotEqual(sets_server._last_config_mtime, 0.0)
+
 
 if __name__ == "__main__":
     unittest.main()

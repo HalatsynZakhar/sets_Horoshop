@@ -91,6 +91,7 @@ def is_request_authenticated(request: Request, runtime_settings: Settings) -> bo
 
 settings: Settings | None = None
 state_store: StateStore | None = None
+_last_config_mtime: float = 0.0
 state_lock = threading.Lock()
 mapping_lock = threading.Lock()
 logger = logging.getLogger(__name__)
@@ -157,11 +158,18 @@ def configure_service_output(runtime_settings: Settings) -> None:
 
 
 def get_runtime() -> tuple[Settings, StateStore]:
-    global settings, state_store
-    if settings is None or state_store is None:
+    global settings, state_store, _last_config_mtime
+    try:
+        current_mtime = CONFIG_FILE.stat().st_mtime
+    except OSError:
+        current_mtime = 0.0
+
+    if settings is None or state_store is None or current_mtime != _last_config_mtime:
         ensure_config_file()
         settings = load_settings(CONFIG_FILE)
-        state_store = StateStore(settings.state_file)
+        if state_store is None or (settings.state_file != state_store.path):
+            state_store = StateStore(settings.state_file)
+        _last_config_mtime = current_mtime
     return settings, state_store
 
 
